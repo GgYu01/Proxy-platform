@@ -38,17 +38,50 @@ class CommandSpec:
 
 
 @dataclass(frozen=True)
+class PythonRequirement:
+    min_version: str
+    candidates: list[str]
+    env_hint: str | None
+
+
+@dataclass(frozen=True)
+class ToolchainCommandSpec:
+    command_id: str
+    display_name: str
+    argv: list[str]
+    fallback_argvs: list[list[str]]
+
+
+@dataclass(frozen=True)
+class ToolchainProfile:
+    profile_id: str
+    display_name: str
+    description: str
+    required_modes: list[str]
+    repo_ids: list[str]
+    python: PythonRequirement
+    commands: list[ToolchainCommandSpec]
+
+    def applies_to_mode(self, mode: str) -> bool:
+        return mode in self.required_modes
+
+
+@dataclass(frozen=True)
 class PlatformManifest:
     name: str
     version: str
     default_mode: str
     supported_modes: list[str]
     repos: list[RepoSpec]
+    toolchains: dict[str, ToolchainProfile]
     commands: dict[str, CommandSpec]
     source_path: Path
 
     def repos_for_mode(self, mode: str) -> list[RepoSpec]:
         return [repo for repo in self.repos if repo.applies_to_mode(mode)]
+
+    def toolchains_for_mode(self, mode: str) -> list[ToolchainProfile]:
+        return [profile for profile in self.toolchains.values() if profile.applies_to_mode(mode)]
 
 
 def load_manifest(path: str | Path) -> PlatformManifest:
@@ -72,6 +105,37 @@ def load_manifest(path: str | Path) -> PlatformManifest:
         )
         for item in payload.get("repos", [])
     ]
+    toolchain_items = payload.get("toolchains", [])
+    toolchain_ids = [item["id"] for item in toolchain_items]
+    if len(set(toolchain_ids)) != len(toolchain_ids):
+        raise ManifestError("duplicate toolchain ids are not allowed")
+    toolchains = {
+        item["id"]: ToolchainProfile(
+            profile_id=item["id"],
+            display_name=item["display_name"],
+            description=item["description"],
+            required_modes=list(item["required_modes"]),
+            repo_ids=list(item["repo_ids"]),
+            python=PythonRequirement(
+                min_version=str(item["python"]["min_version"]),
+                candidates=[str(candidate) for candidate in item["python"]["candidates"]],
+                env_hint=item["python"].get("env_hint"),
+            ),
+            commands=[
+                ToolchainCommandSpec(
+                    command_id=command["id"],
+                    display_name=command["display_name"],
+                    argv=[str(value) for value in command["argv"]],
+                    fallback_argvs=[
+                        [str(value) for value in argv]
+                        for argv in command.get("fallback_argvs", [])
+                    ],
+                )
+                for command in item.get("commands", [])
+            ],
+        )
+        for item in toolchain_items
+    }
     commands = {
         name: CommandSpec(name=name, description=data["description"])
         for name, data in (payload.get("commands") or {}).items()
@@ -82,6 +146,7 @@ def load_manifest(path: str | Path) -> PlatformManifest:
         default_mode=platform["default_mode"],
         supported_modes=list(platform["supported_modes"]),
         repos=repos,
+        toolchains=toolchains,
         commands=commands,
         source_path=manifest_path,
     )
@@ -108,6 +173,27 @@ def _validate_manifest(manifest: PlatformManifest) -> None:
     if unsupported:
         repo_id, mode = unsupported[0]
         raise ManifestError(f"repo {repo_id} uses unsupported mode {mode}")
+
+    unknown_toolchain_modes = [
+        (profile.profile_id, mode)
+        for profile in manifest.toolchains.values()
+        for mode in profile.required_modes
+        if mode not in manifest.supported_modes
+    ]
+    if unknown_toolchain_modes:
+        profile_id, mode = unknown_toolchain_modes[0]
+        raise ManifestError(f"toolchain profile {profile_id} uses unsupported mode {mode}")
+
+    repo_id_set = {repo.repo_id for repo in manifest.repos}
+    unknown_toolchain_repo_ids = [
+        (profile.profile_id, repo_id)
+        for profile in manifest.toolchains.values()
+        for repo_id in profile.repo_ids
+        if repo_id not in repo_id_set
+    ]
+    if unknown_toolchain_repo_ids:
+        profile_id, repo_id = unknown_toolchain_repo_ids[0]
+        raise ManifestError(f"toolchain profile {profile_id} references unknown repo {repo_id}")
 
     _validate_gitmodules_alignment(manifest)
 

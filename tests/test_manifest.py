@@ -35,6 +35,29 @@ def test_load_manifest_tracks_visibility_and_required_modes() -> None:
     assert repo_map["remote_proxy"].optional is False
 
 
+def test_load_manifest_tracks_toolchain_profiles() -> None:
+    manifest = load_manifest(Path(__file__).resolve().parents[1] / "platform.manifest.yaml")
+
+    cliproxy_profile = manifest.toolchains["cliproxy_plus_standalone"]
+    control_plane_profile = manifest.toolchains["control_plane_compose"]
+
+    assert cliproxy_profile.python.min_version == "3.9"
+    assert cliproxy_profile.python.env_hint == "REMOTE_PROXY_PYTHON_BIN"
+    assert cliproxy_profile.repo_ids == ["remote_proxy"]
+    assert [command.command_id for command in cliproxy_profile.commands] == [
+        "curl",
+        "jq",
+        "podman",
+        "systemctl",
+    ]
+
+    assert control_plane_profile.python.min_version == "3.11"
+    assert control_plane_profile.repo_ids == ["cliproxy_control_plane"]
+    docker_compose = next(command for command in control_plane_profile.commands if command.command_id == "docker_compose")
+    assert docker_compose.argv == ["docker", "compose", "version"]
+    assert docker_compose.fallback_argvs == [["docker-compose", "--version"]]
+
+
 def test_load_manifest_rejects_duplicate_repo_ids(tmp_path: Path) -> None:
     manifest_path = tmp_path / "platform.manifest.yaml"
     manifest_path.write_text(
@@ -70,6 +93,60 @@ commands: {}
         load_manifest(manifest_path)
 
 
+def test_load_manifest_rejects_duplicate_toolchain_ids(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "platform.manifest.yaml"
+    manifest_path.write_text(
+        """
+platform:
+  name: proxy-platform
+  version: 0.1.0
+  default_mode: public
+  supported_modes: [public]
+repos:
+  - id: remote_proxy
+    display_name: remote_proxy
+    role: public_runtime_baseline
+    required_modes: [public]
+    optional: false
+    visibility: public
+    default_url: https://example.com/remote_proxy.git
+    default_path: repos/remote_proxy
+toolchains:
+  - id: same
+    display_name: first
+    description: first
+    required_modes: [public]
+    repo_ids: [remote_proxy]
+    python:
+      min_version: "3.9"
+      candidates: [python3]
+      env_hint: REMOTE_PROXY_PYTHON_BIN
+    commands:
+      - id: curl
+        display_name: curl
+        argv: [curl, --version]
+  - id: same
+    display_name: second
+    description: second
+    required_modes: [public]
+    repo_ids: [remote_proxy]
+    python:
+      min_version: "3.11"
+      candidates: [python3.11]
+      env_hint: REMOTE_PROXY_PYTHON_BIN
+    commands:
+      - id: jq
+        display_name: jq
+        argv: [jq, --version]
+commands: {}
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ManifestError):
+        load_manifest(manifest_path)
+
+
 def test_load_manifest_rejects_invalid_default_mode(tmp_path: Path) -> None:
     manifest_path = tmp_path / "platform.manifest.yaml"
     manifest_path.write_text(
@@ -80,6 +157,47 @@ platform:
   default_mode: broken
   supported_modes: [public, operator]
 repos: []
+commands: {}
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ManifestError):
+        load_manifest(manifest_path)
+
+
+def test_load_manifest_rejects_toolchain_unknown_repo_id(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "platform.manifest.yaml"
+    manifest_path.write_text(
+        """
+platform:
+  name: proxy-platform
+  version: 0.1.0
+  default_mode: public
+  supported_modes: [public]
+repos:
+  - id: remote_proxy
+    display_name: remote_proxy
+    role: public_runtime_baseline
+    required_modes: [public]
+    optional: false
+    visibility: public
+    default_url: https://example.com/remote_proxy.git
+    default_path: repos/remote_proxy
+toolchains:
+  - id: broken_profile
+    display_name: broken
+    description: broken
+    required_modes: [public]
+    repo_ids: [missing_repo]
+    python:
+      min_version: "3.9"
+      candidates: [python3]
+      env_hint: REMOTE_PROXY_PYTHON_BIN
+    commands:
+      - id: curl
+        display_name: curl
+        argv: [curl, --version]
 commands: {}
 """,
         encoding="utf-8",

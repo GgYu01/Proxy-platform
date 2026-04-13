@@ -47,10 +47,53 @@ repos:
     default_path: repos/remote_browser
     local_override_path: /workspaces/temp/multi_repo_arch_analysis/remote_browser
 
+toolchains:
+  - id: cliproxy_plus_standalone
+    display_name: cliproxy-plus standalone VPS
+    description: remote_proxy 中 CLIProxyAPIPlus 独立 VPS 路径的宿主机依赖基线
+    required_modes: [public, operator]
+    repo_ids: [remote_proxy]
+    python:
+      min_version: "3.9"
+      candidates: [python3.13, python3.12, python3.11, python3.10, python3.9, python3]
+      env_hint: REMOTE_PROXY_PYTHON_BIN
+    commands:
+      - id: curl
+        display_name: curl
+        argv: [curl, --version]
+      - id: jq
+        display_name: jq
+        argv: [jq, --version]
+      - id: podman
+        display_name: podman
+        argv: [podman, --version]
+      - id: systemctl
+        display_name: systemctl
+        argv: [systemctl, --version]
+
+  - id: control_plane_compose
+    display_name: control-plane compose runtime
+    description: CliProxy-control-plane compose 运行路径的本机/宿主机依赖基线
+    required_modes: [public, operator]
+    repo_ids: [cliproxy_control_plane]
+    python:
+      min_version: "3.11"
+      candidates: [python3.13, python3.12, python3.11, python3]
+      env_hint: CLIPROXY_CONTROL_PLANE_PYTHON_BIN
+    commands:
+      - id: docker
+        display_name: docker
+        argv: [docker, --version]
+      - id: docker_compose
+        display_name: Docker Compose
+        argv: [docker, compose, version]
+        fallback_argvs:
+          - [docker-compose, --version]
+
 commands:
   doctor:
-    description: 检查 manifest、工作区仓库状态和模式适配性
+    description: 检查工作区仓库状态与宿主机 toolchain profile
   init:
-    description: 初始化工作区，当前阶段只提供 dry-run 计划
+    description: 初始化工作区，支持 fetch / local override / clone 三类物化路径
   sync:
-    description: 同步工作区仓库，当前阶段只提供 dry-run 计划
+    description: 同步工作区仓库，支持 fetch / local override / clone 三类物化路径

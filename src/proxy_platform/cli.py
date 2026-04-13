@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TextIO
 
 from proxy_platform.manifest import ManifestError, PlatformManifest, load_manifest
+from proxy_platform.toolchain import diagnose_toolchain_profile
 from proxy_platform.workspace import (
     build_init_plan,
     build_sync_plan,
@@ -55,6 +56,36 @@ def run_cli(argv: list[str], *, stdout: TextIO, stderr: TextIO | None = None) ->
                 f"path={status.selected_path}\n"
             )
         return 0
+
+    if args.command == "doctor" and getattr(args, "doctor_command", None) == "toolchain":
+        profile = manifest.toolchains.get(args.profile)
+        if profile is None:
+            stderr.write(f"unknown toolchain profile: {args.profile}\n")
+            return 2
+        diagnosis = diagnose_toolchain_profile(profile, os_release_path=args.os_release_path)
+        stdout.write(
+            f"doctor-toolchain: profile={profile.profile_id} ok={str(diagnosis.ok).lower()}\n"
+        )
+        stdout.write(
+            f"os: {diagnosis.os_release.pretty_name} "
+            f"(id={diagnosis.os_release.system_id} version={diagnosis.os_release.version_id})\n"
+        )
+        python_selected = diagnosis.python.selected_command or "none"
+        python_path = diagnosis.python.selected_path or "none"
+        python_version = diagnosis.python.version or "none"
+        stdout.write(
+            f"python: ok={str(diagnosis.python.ok).lower()} min={diagnosis.python.min_version} "
+            f"selected={python_selected} path={python_path} version={python_version}"
+        )
+        if diagnosis.python.env_hint:
+            stdout.write(f" env_hint={diagnosis.python.env_hint}")
+        stdout.write("\n")
+        for command in diagnosis.commands:
+            if command.ok:
+                stdout.write(f"- {command.command_id}: ok=true version={command.version}\n")
+            else:
+                stdout.write(f"- {command.command_id}: ok=false detail={command.detail}\n")
+        return 0 if diagnosis.ok else 2
 
     if args.command == "doctor":
         diagnosis = diagnose_workspace(manifest, workspace_root, mode)
@@ -119,6 +150,11 @@ def _build_parser() -> argparse.ArgumentParser:
     doctor_parser.add_argument("--manifest", default="platform.manifest.yaml")
     doctor_parser.add_argument("--workspace-root", default=".")
     doctor_parser.add_argument("--mode", default=None)
+    doctor_subparsers = doctor_parser.add_subparsers(dest="doctor_command", required=False)
+    doctor_toolchain_parser = doctor_subparsers.add_parser("toolchain", help="Diagnose host toolchain")
+    doctor_toolchain_parser.add_argument("--manifest", default="platform.manifest.yaml")
+    doctor_toolchain_parser.add_argument("--profile", required=True)
+    doctor_toolchain_parser.add_argument("--os-release-path", default="/etc/os-release")
 
     init_parser = subparsers.add_parser("init", help="Initialize workspace")
     init_parser.add_argument("--manifest", default="platform.manifest.yaml")
@@ -141,4 +177,9 @@ def _load_manifest_from_args(args: argparse.Namespace) -> PlatformManifest:
 
 
 def _has_unresolved_repo_action(lines: list[str]) -> bool:
-    return any("remote clone not implemented yet" in line for line in lines)
+    unresolved_markers = (
+        "remote clone not implemented yet",
+        "failed to clone",
+        "failed to fetch",
+    )
+    return any(any(marker in line for marker in unresolved_markers) for line in lines)

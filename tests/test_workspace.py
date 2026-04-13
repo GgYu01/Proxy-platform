@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 
 import yaml
 
@@ -123,3 +124,146 @@ def test_sync_workspace_restores_missing_repo_from_local_override(tmp_path: Path
     repo_path = tmp_path / "repos" / "remote_proxy"
     assert repo_path.is_symlink()
     assert repo_path.resolve() == source_repo.resolve()
+
+
+def test_initialize_workspace_clones_repo_when_default_url_is_local_git_repo(tmp_path: Path) -> None:
+    source_repo = tmp_path / "sources" / "remote_proxy"
+    source_repo.mkdir(parents=True)
+    subprocess.run(["git", "init", "-b", "main"], cwd=source_repo, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=source_repo, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=source_repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    (source_repo / "README.md").write_text("remote proxy\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=source_repo, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "commit", "-m", "init"],
+        cwd=source_repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    manifest_path = tmp_path / "platform.manifest.yaml"
+    manifest_payload = {
+        "platform": {
+            "name": "proxy-platform",
+            "version": "0.1.0",
+            "default_mode": "public",
+            "supported_modes": ["public"],
+        },
+        "repos": [
+            {
+                "id": "remote_proxy",
+                "display_name": "remote_proxy",
+                "role": "public_runtime_baseline",
+                "required_modes": ["public"],
+                "optional": False,
+                "visibility": "public",
+                "default_url": str(source_repo),
+                "default_path": "repos/remote_proxy",
+            }
+        ],
+        "commands": {},
+    }
+    manifest_path.write_text(yaml.safe_dump(manifest_payload, sort_keys=False), encoding="utf-8")
+
+    manifest = load_manifest(manifest_path)
+    plan = initialize_workspace(manifest, tmp_path, mode="public")
+
+    cloned_repo = tmp_path / "repos" / "remote_proxy"
+    assert (cloned_repo / "README.md").read_text(encoding="utf-8") == "remote proxy\n"
+    assert any("cloned remote_proxy" in item for item in plan)
+
+
+def test_sync_workspace_reports_fetch_failure_for_existing_git_repo(tmp_path: Path) -> None:
+    source_repo = tmp_path / "sources" / "remote_proxy"
+    source_repo.mkdir(parents=True)
+    subprocess.run(["git", "init", "-b", "main"], cwd=source_repo, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=source_repo, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=source_repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    (source_repo / "README.md").write_text("remote proxy\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=source_repo, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=source_repo, check=True, capture_output=True, text=True)
+
+    repo_path = tmp_path / "repos" / "remote_proxy"
+    repo_path.parent.mkdir(parents=True)
+    subprocess.run(["git", "clone", str(source_repo), str(repo_path)], check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "remote", "set-url", "origin", "https://example.com/remote_proxy.git"],
+        cwd=repo_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    manifest_path = tmp_path / "platform.manifest.yaml"
+    manifest_payload = {
+        "platform": {
+            "name": "proxy-platform",
+            "version": "0.1.0",
+            "default_mode": "public",
+            "supported_modes": ["public"],
+        },
+        "repos": [
+            {
+                "id": "remote_proxy",
+                "display_name": "remote_proxy",
+                "role": "public_runtime_baseline",
+                "required_modes": ["public"],
+                "optional": False,
+                "visibility": "public",
+                "default_url": str(source_repo),
+                "default_path": "repos/remote_proxy",
+            }
+        ],
+        "commands": {},
+    }
+    manifest_path.write_text(yaml.safe_dump(manifest_payload, sort_keys=False), encoding="utf-8")
+
+    manifest = load_manifest(manifest_path)
+    plan = sync_workspace(manifest, tmp_path, mode="public")
+
+    assert any("failed to fetch remote_proxy" in item for item in plan)
+
+
+def test_initialize_workspace_cleans_partial_clone_directory_on_failure(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "platform.manifest.yaml"
+    manifest_payload = {
+        "platform": {
+            "name": "proxy-platform",
+            "version": "0.1.0",
+            "default_mode": "public",
+            "supported_modes": ["public"],
+        },
+        "repos": [
+            {
+                "id": "remote_proxy",
+                "display_name": "remote_proxy",
+                "role": "public_runtime_baseline",
+                "required_modes": ["public"],
+                "optional": False,
+                "visibility": "public",
+                "default_url": "https://example.com/remote_proxy.git",
+                "default_path": "repos/remote_proxy",
+            }
+        ],
+        "commands": {},
+    }
+    manifest_path.write_text(yaml.safe_dump(manifest_payload, sort_keys=False), encoding="utf-8")
+
+    manifest = load_manifest(manifest_path)
+    plan = initialize_workspace(manifest, tmp_path, mode="public")
+
+    assert any("failed to clone remote_proxy" in item for item in plan)
+    assert not (tmp_path / "repos" / "remote_proxy").exists()

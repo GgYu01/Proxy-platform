@@ -30,4 +30,4 @@
 
 - 私有仓库 submodule URL 暂时无法在当前环境下完成真实拉取验证，需要通过 manifest 和 local-path 检测支持 operator mode。
 - 如果实现过度膨胀为第二控制面，则偏离当前阶段目标。
-- 当前仍未完成真实 `.gitmodules` 接线与网络 clone 流程；这部分只能在下一阶段通过更完整 workspace orchestration 继续覆盖。
+- 当前仍未实现自动安装/切换系统运行时；平台壳只负责诊断和建议，不直接改宿主机。
