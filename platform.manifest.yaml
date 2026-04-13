@@ -1,0 +1,56 @@
+platform:
+  name: proxy-platform
+  version: 0.1.0
+  default_mode: public
+  supported_modes:
+    - public
+    - operator
+
+repos:
+  - id: remote_proxy
+    display_name: remote_proxy
+    role: public_runtime_baseline
+    required_modes: [public, operator]
+    optional: false
+    visibility: public
+    default_url: https://github.com/GgYu01/remote_proxy.git
+    default_path: repos/remote_proxy
+    local_override_path: /workspaces/proxy_own/remote_proxy
+
+  - id: cliproxy_control_plane
+    display_name: CliProxy-control-plane
+    role: northbound_control_plane
+    required_modes: [public, operator]
+    optional: false
+    visibility: public
+    default_url: https://github.com/GgYu01/CliProxy-control-plane.git
+    default_path: repos/cliproxy-control-plane
+    local_override_path: /workspaces/temp/multi_repo_arch_analysis/CliProxy-control-plane
+
+  - id: proxy_ops_private
+    display_name: Proxy_ops_private
+    role: private_ops_source_of_truth
+    required_modes: [operator]
+    optional: true
+    visibility: private
+    default_url: git@github.com:GgYu01/Proxy_ops_private.git
+    default_path: repos/proxy_ops_private
+    local_override_path: /workspaces/proxy_own/proxy_ops_private
+
+  - id: remote_browser
+    display_name: remote_browser
+    role: optional_provider
+    required_modes: [operator]
+    optional: true
+    visibility: public
+    default_url: https://github.com/GgYu01/remote_browser.git
+    default_path: repos/remote_browser
+    local_override_path: /workspaces/temp/multi_repo_arch_analysis/remote_browser
+
+commands:
+  doctor:
+    description: 检查 manifest、工作区仓库状态和模式适配性
+  init:
+    description: 初始化工作区，当前阶段只提供 dry-run 计划
+  sync:
+    description: 同步工作区仓库，当前阶段只提供 dry-run 计划

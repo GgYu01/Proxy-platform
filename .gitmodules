@@ -1,0 +1,15 @@
+[submodule "remote_proxy"]
+	path = repos/remote_proxy
+	url = https://github.com/GgYu01/remote_proxy.git
+
+[submodule "cliproxy_control_plane"]
+	path = repos/cliproxy-control-plane
+	url = https://github.com/GgYu01/CliProxy-control-plane.git
+
+[submodule "proxy_ops_private"]
+	path = repos/proxy_ops_private
+	url = git@github.com:GgYu01/Proxy_ops_private.git
+
+[submodule "remote_browser"]
+	path = repos/remote_browser
+	url = https://github.com/GgYu01/remote_browser.git
