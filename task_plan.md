@@ -24,8 +24,11 @@
 3. `completed` 盘点本地 Codex/MCP 配置与启动日志，确认 timeout 现状
 4. `completed` 提炼问题定义与关键架构分歧，用户确认选择混合模式
 5. `completed` 输出正式设计、ADR、测试和第一阶段实现
-6. `in_progress` 收口 public/operator 边界，防止私有登记册被 public 模式隐式读取
-7. `pending` 进入第二阶段：远端 job schema、dry-run、审计与受控 apply 入口
+6. `completed` 收口 public/operator 边界，防止私有登记册被 public 模式隐式读取
+7. `completed` 进入第二阶段：远端 job schema、dry-run、审计与受控 apply 入口
+8. `completed` 补强 mutation job 合同：当前策略复核、执行器漂移拦截、已执行计划防重放
+9. `completed` 对齐 operator 文档与维护口径：统一虚拟环境入口、补 operator 前提、声明 state 目录定位
+10. `pending` 第三阶段：authority adapter / 远端正式部署拓扑 ADR / 公开视图脱敏源
 
 ## 已确认事实
 
@@ -33,6 +36,11 @@
 - 当前平台壳能做的是工作区仓库盘点、toolchain 体检、init/sync；不能做远端主机注册、部署执行、健康巡检或订阅聚合。
 - 当前 `~/.codex/config.toml` 中多数 MCP `startup_timeout_sec` 仍为 `120.0`，未体现用户要求的 `15` 秒启动预算。
 - 当前 workspace / toolchain 代码使用同步 `subprocess.run(...)`，还没有统一 retry/timeout budget 抽象。
+- 当前 mutation job apply 已补齐三道合同闸门：
+  - 当前 manifest 仍允许 apply
+  - 当前 executor 与计划时一致
+  - 同一 `job_id` 没有已经执行过的 `applied` 审计
+- operator inventory 现在正式支持 `include_in_subscription`，页面表单、登记册模型和订阅派生规则已对齐。
 
 ## 当前风险
 
@@ -54,12 +62,15 @@
 
 ### 当前阶段
 
-1. `in_progress` 现状盘点：确认仓库当前只有 workspace/toolchain 壳能力，没有主机注册与订阅编排能力
-2. `pending` 根因拆解：解释为什么当前需求不能直接塞进现有 doctor/init/sync
-3. `pending` 候选架构：收敛主机登记册、探针、订阅视图、部署 job schema 的边界
+1. `completed` 现状盘点：确认仓库当前只有 workspace/toolchain 壳能力，没有主机注册与订阅编排能力
+2. `completed` 根因拆解：解释为什么当前需求不能直接塞进现有 doctor/init/sync
+3. `completed` 候选架构：收敛主机登记册、探针、订阅视图、部署 job schema 的边界
 4. `completed` 设计输出：形成评审可读的正式方案并完成第一阶段实现
-5. `in_progress` 边界回收：把依赖 private registry 的视图正式收紧为 `operator` 模式
-6. `pending` 第二阶段：定义远端 mutation job schema 与审计模型
+5. `completed` 边界回收：把依赖 private registry 的视图正式收紧为 `operator` 模式
+6. `completed` 第二阶段：定义远端 mutation job schema 与审计模型
+7. `completed` review hardening：修复 apply 原子性、计划重放与坏计划文件错误处理
+8. `completed` 文档 hardening：统一 `.venv` 入口，补 operator 前提与 state 目录说明
+9. `pending` 第三阶段：真正的远端 authority adapter、部署拓扑 ADR、正式域名与认证入口
 
 ### 本轮风险
 

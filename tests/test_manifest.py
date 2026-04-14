@@ -88,6 +88,19 @@ def test_load_manifest_tracks_state_sources_and_projections() -> None:
     assert subscription_projection.rules["require_registry_enabled"] is True
 
 
+def test_load_manifest_tracks_job_policy_and_audit_config() -> None:
+    manifest = load_manifest(Path(__file__).resolve().parents[1] / "platform.manifest.yaml")
+
+    assert manifest.jobs is not None
+    assert manifest.jobs.audit_path == Path("state/jobs/audit")
+    assert manifest.jobs.required_modes == ["operator"]
+    assert manifest.jobs.require_confirmation is True
+    assert manifest.jobs.policy_for("add_host").allow_apply is True
+    assert manifest.jobs.policy_for("remove_host").allow_apply is True
+    assert manifest.jobs.policy_for("deploy_host").allow_apply is False
+    assert manifest.jobs.policy_for("deploy_host").executor == "not_configured"
+
+
 def test_load_manifest_rejects_projection_with_unknown_source(tmp_path: Path) -> None:
     manifest_path = tmp_path / "platform.manifest.yaml"
     manifest_path.write_text(

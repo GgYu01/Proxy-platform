@@ -62,6 +62,30 @@ class LocalProviderSpec:
 
 
 @dataclass(frozen=True)
+class JobPolicySpec:
+    job_kind: str
+    allow_apply: bool
+    executor: str
+
+
+@dataclass(frozen=True)
+class JobsConfig:
+    audit_path: Path
+    required_modes: list[str]
+    require_confirmation: bool
+    policies: tuple[JobPolicySpec, ...]
+
+    def applies_to_mode(self, mode: str) -> bool:
+        return mode in self.required_modes
+
+    def policy_for(self, job_kind: str) -> JobPolicySpec:
+        for policy in self.policies:
+            if policy.job_kind == job_kind:
+                return policy
+        raise KeyError(job_kind)
+
+
+@dataclass(frozen=True)
 class StateSourceSpec:
     source_id: str
     display_name: str
@@ -127,6 +151,7 @@ class PlatformManifest:
     supported_modes: list[str]
     repos: list[RepoSpec]
     host_registry_source: HostRegistrySource | None
+    jobs: JobsConfig | None
     local_providers: tuple[LocalProviderSpec, ...]
     state_sources: dict[str, StateSourceSpec]
     projections: dict[str, ProjectionSpec]
@@ -219,6 +244,22 @@ def load_manifest(path: str | Path) -> PlatformManifest:
             ),
             required_modes=list(host_registry_payload.get("required_modes", platform["supported_modes"])),
         )
+    jobs_payload = state_payload.get("jobs")
+    jobs_config = None
+    if jobs_payload:
+        jobs_config = JobsConfig(
+            audit_path=Path(jobs_payload["audit_path"]),
+            required_modes=list(jobs_payload.get("required_modes", platform["supported_modes"])),
+            require_confirmation=bool(jobs_payload.get("require_confirmation", True)),
+            policies=tuple(
+                JobPolicySpec(
+                    job_kind=item["id"],
+                    allow_apply=bool(item["allow_apply"]),
+                    executor=str(item["executor"]),
+                )
+                for item in jobs_payload.get("kinds", [])
+            ),
+        )
     local_providers = tuple(
         LocalProviderSpec(
             provider_id=item["id"],
@@ -274,6 +315,7 @@ def load_manifest(path: str | Path) -> PlatformManifest:
         supported_modes=list(platform["supported_modes"]),
         repos=repos,
         host_registry_source=host_registry_source,
+        jobs=jobs_config,
         local_providers=local_providers,
         state_sources=state_sources,
         projections=projections,
@@ -369,6 +411,7 @@ def _validate_manifest(manifest: PlatformManifest) -> None:
         raise ManifestError(f"toolchain profile {profile_id} references unknown repo {repo_id}")
 
     _validate_host_registry_alignment(manifest)
+    _validate_jobs_alignment(manifest)
     _validate_projection_mode_coverage(manifest)
     _validate_gitmodules_alignment(manifest)
 
@@ -387,6 +430,20 @@ def _validate_host_registry_alignment(manifest: PlatformManifest) -> None:
         raise ManifestError(
             "state.host_registry.required_modes must match state_sources.host_registry.required_modes"
         )
+
+
+def _validate_jobs_alignment(manifest: PlatformManifest) -> None:
+    jobs = manifest.jobs
+    if jobs is None:
+        return
+
+    invalid_modes = [mode for mode in jobs.required_modes if mode not in manifest.supported_modes]
+    if invalid_modes:
+        raise ManifestError(f"jobs config uses unsupported mode {invalid_modes[0]}")
+
+    policy_ids = [policy.job_kind for policy in jobs.policies]
+    if len(set(policy_ids)) != len(policy_ids):
+        raise ManifestError("duplicate job policy ids are not allowed")
 
 
 def _validate_projection_mode_coverage(manifest: PlatformManifest) -> None:

@@ -62,3 +62,32 @@
 - 新增的 manifest 校验会阻止一类长期漂移：
   - 如果 projection 声称支持某个 mode，但其 source 并不支持，manifest 直接判错
 - 这意味着后续若要做公开页面或公开订阅入口，必须先补“脱敏派生状态源”，而不是继续复用私有登记册
+
+## 2026-04-14 合同硬化结果
+
+- mutation job apply 仅校验“计划没被替换”还不够，还必须校验“当前平台规则仍允许执行”：
+  - 如果 manifest 后来把某类 job 改成 dry-run，旧计划不能继续 apply
+  - 如果 executor 语义变了，旧计划也必须重新评审再生成
+- 同一个 `job_id` 不能通过把 `status` 改回 `planned` 来重放：
+  - 现在只要审计里已经有 `applied` 事件，就会拒绝再次执行
+- 受管目录内的坏计划文件也要走合同错误，而不是回退成 traceback/500：
+  - 缺失计划文件会返回 `unknown plan file`
+  - 损坏 JSON 会返回 `failed to load plan file`
+- operator inventory 模型和文档原先有一个真实错位：
+  - 文档说订阅由 `enabled` 和 `include_in_subscription` 共同决定
+  - 但实现只支持 `enabled`
+  - 现在已经把 `include_in_subscription` 接回登记册模型、页面表单和订阅派生逻辑
+- 当前 inventory 写回已经恢复成 YAML，而不是把 YAML 真相文件写成 JSON 文本；这更符合 private inventory 的维护方式。
+
+## 2026-04-14 文档与维护口径结果
+
+- README、operator runbook、mutation job runbook 现在统一改成以仓库本地 `.venv/bin/python` 为基准命令入口。
+- 文档现在明确区分两类启动：
+  - public 壳能力
+  - 依赖 `repos/proxy_ops_private/` 的 operator 能力
+- `state/` 目录现在被明确标成：
+  - 本地运行态和审计痕迹
+  - 不是 inventory 真相源
+  - 不提交到 Git
+- Web runbook 现在补了一个明确的“上线决策门”：
+  - 远端正式部署前，必须先补 deployment ADR，明确落地拓扑、发布仓库和认证入口责任归属

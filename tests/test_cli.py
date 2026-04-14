@@ -582,6 +582,410 @@ observations:
     assert "unknown observation hosts: stray" in output
 
 
+def test_jobs_plan_add_host_and_apply_commands_create_audited_inventory_change(tmp_path: Path) -> None:
+    operator_dir = tmp_path / "operator"
+    observed_dir = tmp_path / "state" / "observed"
+    operator_dir.mkdir(parents=True)
+    observed_dir.mkdir(parents=True)
+    (operator_dir / "nodes.yaml").write_text(
+        """
+nodes:
+  - name: lisahost
+    host: 38.34.8.59
+    ssh_port: 27823
+    base_port: 10000
+    subscription_alias: GG-Lisa-Stable
+    enabled: true
+    infra_core_candidate: true
+    change_policy: frozen
+    provider: Lisahost
+""",
+        encoding="utf-8",
+    )
+    (operator_dir / "subscriptions.yaml").write_text(
+        """
+profile_name: GG Proxy Nodes
+subscription_base_url: https://example.com/subscriptions
+hiddify_fragment_name: GG Proxy Nodes
+remote_profile_name: GG Proxy Nodes Remote
+update_interval_hours: 12
+""",
+        encoding="utf-8",
+    )
+    manifest_path = tmp_path / "platform.manifest.yaml"
+    manifest_path.write_text(
+        """
+platform:
+  name: proxy-platform
+  version: 0.1.0
+  default_mode: operator
+  supported_modes: [public, operator]
+repos: []
+state:
+  host_registry:
+    inventory_path: operator/nodes.yaml
+    subscriptions_path: operator/subscriptions.yaml
+    required_modes: [operator]
+  jobs:
+    audit_path: state/jobs/audit
+    required_modes: [operator]
+    require_confirmation: true
+    kinds:
+      - id: add_host
+        allow_apply: true
+        executor: inventory_only
+      - id: remove_host
+        allow_apply: true
+        executor: inventory_only
+      - id: deploy_host
+        allow_apply: false
+        executor: not_configured
+      - id: decommission_host
+        allow_apply: false
+        executor: not_configured
+commands: {}
+""",
+        encoding="utf-8",
+    )
+    host_spec_path = tmp_path / "vmrack1.json"
+    host_spec_path.write_text(
+        """
+{
+  "name": "vmrack1",
+  "host": "38.65.93.39",
+  "ssh_port": 22,
+  "base_port": 10000,
+  "subscription_alias": "GG-Vmrack1",
+  "enabled": true,
+  "infra_core_candidate": true,
+  "change_policy": "mutable",
+  "provider": "vmrack"
+}
+""",
+        encoding="utf-8",
+    )
+    plan_path = tmp_path / "state" / "jobs" / "plans" / "add-host.json"
+
+    stdout = StringIO()
+    exit_code = run_cli(
+        [
+            "jobs",
+            "plan-add-host",
+            "--manifest",
+            str(manifest_path),
+            "--workspace-root",
+            str(tmp_path),
+            "--mode",
+            "operator",
+            "--spec",
+            str(host_spec_path),
+            "--output",
+            str(plan_path),
+        ],
+        stdout=stdout,
+    )
+
+    output = stdout.getvalue()
+    assert exit_code == 0
+    assert "job planned:" in output
+    assert "kind=add_host" in output
+    assert plan_path.exists()
+
+    stdout = StringIO()
+    exit_code = run_cli(
+        [
+            "jobs",
+            "apply",
+            "--manifest",
+            str(manifest_path),
+            "--workspace-root",
+            str(tmp_path),
+            "--mode",
+            "operator",
+            "--plan-file",
+            str(plan_path),
+            "--confirm",
+        ],
+        stdout=stdout,
+    )
+
+    output = stdout.getvalue()
+    assert exit_code == 0
+    assert "job applied:" in output
+    assert "status=applied" in output
+
+
+def test_jobs_apply_rejects_dry_run_only_deploy_job(tmp_path: Path) -> None:
+    operator_dir = tmp_path / "operator"
+    operator_dir.mkdir(parents=True)
+    (operator_dir / "nodes.yaml").write_text(
+        """
+nodes:
+  - name: lisahost
+    host: 38.34.8.59
+    ssh_port: 27823
+    base_port: 10000
+    subscription_alias: GG-Lisa-Stable
+    enabled: true
+    infra_core_candidate: true
+    change_policy: frozen
+    provider: Lisahost
+""",
+        encoding="utf-8",
+    )
+    (operator_dir / "subscriptions.yaml").write_text(
+        """
+profile_name: GG Proxy Nodes
+subscription_base_url: https://example.com/subscriptions
+hiddify_fragment_name: GG Proxy Nodes
+remote_profile_name: GG Proxy Nodes Remote
+update_interval_hours: 12
+""",
+        encoding="utf-8",
+    )
+    manifest_path = tmp_path / "platform.manifest.yaml"
+    manifest_path.write_text(
+        """
+platform:
+  name: proxy-platform
+  version: 0.1.0
+  default_mode: operator
+  supported_modes: [public, operator]
+repos: []
+state:
+  host_registry:
+    inventory_path: operator/nodes.yaml
+    subscriptions_path: operator/subscriptions.yaml
+    required_modes: [operator]
+  jobs:
+    audit_path: state/jobs/audit
+    required_modes: [operator]
+    require_confirmation: true
+    kinds:
+      - id: add_host
+        allow_apply: true
+        executor: inventory_only
+      - id: remove_host
+        allow_apply: true
+        executor: inventory_only
+      - id: deploy_host
+        allow_apply: false
+        executor: not_configured
+      - id: decommission_host
+        allow_apply: false
+        executor: not_configured
+commands: {}
+""",
+        encoding="utf-8",
+    )
+    plan_path = tmp_path / "state" / "jobs" / "plans" / "deploy-host.json"
+
+    stdout = StringIO()
+    exit_code = run_cli(
+        [
+            "jobs",
+            "plan-deploy-host",
+            "--manifest",
+            str(manifest_path),
+            "--workspace-root",
+            str(tmp_path),
+            "--mode",
+            "operator",
+            "--host-name",
+            "lisahost",
+            "--output",
+            str(plan_path),
+        ],
+        stdout=stdout,
+    )
+    assert exit_code == 0
+    assert plan_path.exists()
+
+    stdout = StringIO()
+    stderr = StringIO()
+    exit_code = run_cli(
+        [
+            "jobs",
+            "apply",
+            "--manifest",
+            str(manifest_path),
+            "--workspace-root",
+            str(tmp_path),
+            "--mode",
+            "operator",
+            "--plan-file",
+            str(plan_path),
+            "--confirm",
+        ],
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 2
+    assert "dry-run only in current phase" in stderr.getvalue()
+
+
+def test_jobs_apply_rejects_plan_file_outside_managed_directory(tmp_path: Path) -> None:
+    operator_dir = tmp_path / "operator"
+    operator_dir.mkdir(parents=True)
+    (operator_dir / "nodes.yaml").write_text(
+        """
+nodes:
+  - name: lisahost
+    host: 38.34.8.59
+    ssh_port: 27823
+    base_port: 10000
+    subscription_alias: GG-Lisa-Stable
+    enabled: true
+    infra_core_candidate: true
+    change_policy: frozen
+    provider: Lisahost
+""",
+        encoding="utf-8",
+    )
+    (operator_dir / "subscriptions.yaml").write_text(
+        """
+profile_name: GG Proxy Nodes
+subscription_base_url: https://example.com/subscriptions
+hiddify_fragment_name: GG Proxy Nodes
+remote_profile_name: GG Proxy Nodes Remote
+update_interval_hours: 12
+""",
+        encoding="utf-8",
+    )
+    manifest_path = tmp_path / "platform.manifest.yaml"
+    manifest_path.write_text(
+        """
+platform:
+  name: proxy-platform
+  version: 0.1.0
+  default_mode: operator
+  supported_modes: [public, operator]
+repos: []
+state:
+  host_registry:
+    inventory_path: operator/nodes.yaml
+    subscriptions_path: operator/subscriptions.yaml
+    required_modes: [operator]
+  jobs:
+    audit_path: state/jobs/audit
+    required_modes: [operator]
+    require_confirmation: true
+    kinds:
+      - id: add_host
+        allow_apply: true
+        executor: inventory_only
+commands: {}
+""",
+        encoding="utf-8",
+    )
+    rogue_plan = tmp_path / "rogue-plan.json"
+    rogue_plan.write_text("{}", encoding="utf-8")
+
+    stdout = StringIO()
+    stderr = StringIO()
+    exit_code = run_cli(
+        [
+            "jobs",
+            "apply",
+            "--manifest",
+            str(manifest_path),
+            "--workspace-root",
+            str(tmp_path),
+            "--mode",
+            "operator",
+            "--plan-file",
+            str(rogue_plan),
+            "--confirm",
+        ],
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 2
+    assert "plan path must stay inside" in stderr.getvalue()
+
+
+def test_jobs_apply_reports_missing_managed_plan_file_cleanly(tmp_path: Path) -> None:
+    operator_dir = tmp_path / "operator"
+    operator_dir.mkdir(parents=True)
+    (operator_dir / "nodes.yaml").write_text(
+        """
+nodes:
+  - name: lisahost
+    host: 38.34.8.59
+    ssh_port: 27823
+    base_port: 10000
+    subscription_alias: GG-Lisa-Stable
+    enabled: true
+    infra_core_candidate: true
+    change_policy: frozen
+    provider: Lisahost
+""",
+        encoding="utf-8",
+    )
+    (operator_dir / "subscriptions.yaml").write_text(
+        """
+profile_name: GG Proxy Nodes
+subscription_base_url: https://example.com/subscriptions
+hiddify_fragment_name: GG Proxy Nodes
+remote_profile_name: GG Proxy Nodes Remote
+update_interval_hours: 12
+""",
+        encoding="utf-8",
+    )
+    manifest_path = tmp_path / "platform.manifest.yaml"
+    manifest_path.write_text(
+        """
+platform:
+  name: proxy-platform
+  version: 0.1.0
+  default_mode: operator
+  supported_modes: [public, operator]
+repos: []
+state:
+  host_registry:
+    inventory_path: operator/nodes.yaml
+    subscriptions_path: operator/subscriptions.yaml
+    required_modes: [operator]
+  jobs:
+    audit_path: state/jobs/audit
+    required_modes: [operator]
+    require_confirmation: true
+    kinds:
+      - id: add_host
+        allow_apply: true
+        executor: inventory_only
+commands: {}
+""",
+        encoding="utf-8",
+    )
+    missing_plan = tmp_path / "state" / "jobs" / "plans" / "missing.json"
+
+    stdout = StringIO()
+    stderr = StringIO()
+    exit_code = run_cli(
+        [
+            "jobs",
+            "apply",
+            "--manifest",
+            str(manifest_path),
+            "--workspace-root",
+            str(tmp_path),
+            "--mode",
+            "operator",
+            "--plan-file",
+            str(missing_plan),
+            "--confirm",
+        ],
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 2
+    assert "unknown plan file" in stderr.getvalue()
+
+
 def test_init_without_dry_run_links_local_override_repo(tmp_path: Path) -> None:
     source_repo = tmp_path / "sources" / "remote_proxy"
     source_repo.mkdir(parents=True)

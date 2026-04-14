@@ -9,3 +9,4 @@ build/
 context-engine-*.log
 repos/
 archive/
+state/

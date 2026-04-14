@@ -14,6 +14,7 @@ class HostView:
     provider: str
     change_policy: str
     enabled: bool
+    include_in_subscription: bool
     observed_health: str
     observed_source: str | None
     observed_at: str | None
@@ -42,7 +43,7 @@ def build_host_views(registry: HostRegistry) -> list[HostView]:
     views: list[HostView] = []
     for node in registry.nodes:
         observed = registry.observations.get(node.name)
-        should_publish = node.enabled
+        should_publish = node.enabled and node.include_in_subscription
         views.append(
             HostView(
                 name=node.name,
@@ -51,12 +52,13 @@ def build_host_views(registry: HostRegistry) -> list[HostView]:
                 provider=node.provider,
                 change_policy=node.change_policy,
                 enabled=node.enabled,
+                include_in_subscription=node.include_in_subscription,
                 observed_health=observed.health if observed else "unknown",
                 observed_source=observed.source if observed else None,
                 observed_at=observed.observed_at if observed else None,
                 observed_detail=observed.detail if observed else None,
                 should_publish=should_publish,
-                publish_reason="enabled_in_registry" if should_publish else "disabled_in_registry",
+                publish_reason=_publish_reason(node.enabled, node.include_in_subscription),
             )
         )
     return views
@@ -67,7 +69,7 @@ def build_subscription_projection(registry: HostRegistry) -> SubscriptionProject
     multi_node_url = base_url + "/v2ray_nodes.txt"
     per_node: list[NodeSubscriptionProjection] = []
     for node in registry.nodes:
-        if not node.enabled:
+        if not (node.enabled and node.include_in_subscription):
             continue
         v2ray_url = base_url + f"/v2ray_node_{node.name}.txt"
         per_node.append(
@@ -88,3 +90,11 @@ def build_subscription_projection(registry: HostRegistry) -> SubscriptionProject
 
 def _hiddify_import(url: str, fragment: str) -> str:
     return f"hiddify://import/{url}#{urllib.parse.quote(fragment)}"
+
+
+def _publish_reason(enabled: bool, include_in_subscription: bool) -> str:
+    if not enabled:
+        return "disabled_in_registry"
+    if not include_in_subscription:
+        return "excluded_by_subscription_policy"
+    return "enabled_in_registry"

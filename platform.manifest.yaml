@@ -53,6 +53,23 @@ state:
     subscriptions_path: repos/proxy_ops_private/inventory/subscriptions.yaml
     observations_path: state/observations/hosts.json
     required_modes: [operator]
+  jobs:
+    audit_path: state/jobs/audit
+    required_modes: [operator]
+    require_confirmation: true
+    kinds:
+      - id: add_host
+        allow_apply: true
+        executor: inventory_only
+      - id: remove_host
+        allow_apply: true
+        executor: inventory_only
+      - id: deploy_host
+        allow_apply: false
+        executor: not_configured
+      - id: decommission_host
+        allow_apply: false
+        executor: not_configured
   local_providers:
     - id: local_mcp_pool
       display_name: Local MCP pool
@@ -170,6 +187,8 @@ commands:
     description: 读取主机登记册和观测回报，输出平台视角的主机状态视图
   init:
     description: 初始化工作区，支持 fetch / local override / clone 三类物化路径
+  jobs:
+    description: 生成 mutation job plan，记录 audit，并在允许的 executor 上执行 apply
   subscriptions:
     description: 基于主机登记册和观测回报预览订阅派生结果
   sync:

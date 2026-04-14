@@ -45,6 +45,12 @@
   - `web --mode operator`
   - `hosts --registry ... [--observations ...]`
   - `subscriptions preview --registry ... [--observations ...]`
+  - `jobs plan-add-host --mode operator --spec ...`
+  - `jobs plan-remove-host --mode operator --host-name ...`
+  - `jobs plan-deploy-host --mode operator --host-name ...`
+  - `jobs plan-decommission-host --mode operator --host-name ...`
+  - `jobs apply --mode operator --plan-file ... --confirm`
+  - `jobs audit-list --mode operator`
 
 当前 `init` / `sync` 的执行边界：
 
@@ -75,7 +81,14 @@
 - 派生视图
   页面列表、订阅成员、后续 job 入口都只从前两层派生。
 
-当前只提供只读入口：
+当前平台状态层已经提供两类入口：
+
+- 只读入口
+  负责看清“现场清单、观测回报、订阅派生”。
+- mutation job 入口
+  负责先生成 plan 和 audit，再决定能不能 apply。
+
+只读入口：
 
 ```bash
 python -m proxy_platform hosts list --mode operator
@@ -84,6 +97,25 @@ python -m proxy_platform web --mode operator
 python -m proxy_platform hosts --registry ./registry.yaml --observations ./observations.yaml
 python -m proxy_platform subscriptions preview --registry ./registry.yaml --observations ./observations.yaml
 ```
+
+mutation job 入口：
+
+```bash
+python -m proxy_platform jobs plan-add-host --mode operator --spec ./host.yaml
+python -m proxy_platform jobs plan-remove-host --mode operator --host-name vmrack1
+python -m proxy_platform jobs plan-deploy-host --mode operator --host-name lisahost
+python -m proxy_platform jobs apply --mode operator --plan-file ./state/jobs/plans/xxx.json --confirm
+python -m proxy_platform jobs audit-list --mode operator
+```
+
+当前 mutation job 边界是：
+
+- `add_host` / `remove_host`
+  允许 `apply`，但 executor 只到 `inventory_only`，也就是只改登记册文件并写审计。
+- `deploy_host` / `decommission_host`
+  只允许 dry-run，不直接 SSH，不直接替代 `remote_proxy` 生命周期入口。
+
+当前 plan 文件只接受位于 `state/jobs/plans/` 这块受管目录下的已审计划，`apply` 时还会校验计划摘要和 `planned` 审计记录是否一致，避免“先审了一个计划，执行时却换了另一个内容”。
 
 当前模式边界：
 
@@ -101,8 +133,11 @@ python -m proxy_platform subscriptions preview --registry ./registry.yaml --obse
 
 - `docs/adr/ADR-0008-platform-state-model.md`
 - `docs/adr/ADR-0009-repository-ownership-matrix.md`
+- `docs/adr/ADR-0010-mutation-job-flow-boundary.md`
 - `docs/repo-boundaries.md`
 - `docs/runbooks/operator-web-console.md`
+- `docs/runbooks/mutation-jobs.md`
+- `docs/review-checklists/mutation-job-flow.md`
 
 ## 推荐工作区布局
 
@@ -112,6 +147,13 @@ python -m proxy_platform subscriptions preview --registry ./registry.yaml --obse
 /workspaces/proxy-platform/
   README.md
   platform.manifest.yaml
+  state/
+    observations/
+      hosts.json
+    jobs/
+      audit/
+        events.jsonl
+      plans/
   repos/
     remote_proxy/
     cliproxy-control-plane/
@@ -124,6 +166,7 @@ python -m proxy_platform subscriptions preview --registry ./registry.yaml --obse
 规则如下：
 
 - `/workspaces/proxy-platform` 是唯一权威根。
+- `state/` 下的是本地运行态和审计痕迹，不是私有 inventory 真相源，也不是需要提交到 Git 的源码目录。
 - `repos/` 下的仓库是权威工作树。
 - `archive/` 下的目录只用于保留分析副本、历史快照和临时验证材料，不作为源码真相源。
 - 历史旧路径已经移除；如需追溯旧计划、日志和分析材料，请到 `archive/` 下查看。
@@ -131,17 +174,35 @@ python -m proxy_platform subscriptions preview --registry ./registry.yaml --obse
 ## 快速开始
 
 ```bash
-python -m venv .venv
+python3 -m venv .venv
 . .venv/bin/activate
-pip install -e .[dev]
-python -m proxy_platform manifest validate
-python -m proxy_platform repos list
-python -m proxy_platform doctor
-python -m proxy_platform doctor toolchain --profile cliproxy_plus_standalone
-python -m proxy_platform init --mode public
-python -m proxy_platform sync --mode public
-python -m proxy_platform hosts list --mode operator
-python -m proxy_platform subscriptions list --mode operator
+.venv/bin/python -m pip install -e .[dev]
+.venv/bin/python -m proxy_platform manifest validate
+.venv/bin/python -m proxy_platform repos list
+.venv/bin/python -m proxy_platform doctor
+.venv/bin/python -m proxy_platform doctor toolchain --profile cliproxy_plus_standalone
+.venv/bin/python -m proxy_platform init --mode public
+.venv/bin/python -m proxy_platform sync --mode public
+```
+
+上面这段只覆盖 public 壳能力，也就是工作区编排、manifest 校验和 toolchain 体检。
+
+如果你要使用 operator 入口，还要满足一个前提：
+
+- `repos/proxy_ops_private/` 必须已经可用。
+- 这通常来自两种路径之一：
+  - 当前工作区已经通过 `local_override_path` 挂好了 `repos/proxy_ops_private/`
+  - 你有权限通过 `git@github.com:GgYu01/Proxy_ops_private.git` 做 operator 模式的 init/sync
+
+operator 只读与 mutation 入口示例：
+
+```bash
+.venv/bin/python -m proxy_platform init --mode operator
+.venv/bin/python -m proxy_platform sync --mode operator
+.venv/bin/python -m proxy_platform hosts list --mode operator
+.venv/bin/python -m proxy_platform subscriptions list --mode operator
+.venv/bin/python -m proxy_platform jobs plan-deploy-host --mode operator --host-name lisahost
+.venv/bin/python -m proxy_platform jobs audit-list --mode operator
 ```
 
 ## Host Toolchain Profiles
@@ -156,8 +217,8 @@ python -m proxy_platform subscriptions list --mode operator
 示例：
 
 ```bash
-python -m proxy_platform doctor toolchain --profile cliproxy_plus_standalone
-python -m proxy_platform doctor toolchain --profile control_plane_compose
+.venv/bin/python -m proxy_platform doctor toolchain --profile cliproxy_plus_standalone
+.venv/bin/python -m proxy_platform doctor toolchain --profile control_plane_compose
 ```
 
 对 Python 类依赖，输出会额外给出：
@@ -184,6 +245,8 @@ python -m proxy_platform doctor toolchain --profile control_plane_compose
 3. 在远端主机执行仓库入口命令，而不是手工改 live systemd 文件：
    - `./scripts/service.sh cliproxy-plus update`
    - `./scripts/service.sh cliproxy-plus switch-version <image>`
+
+当前 `proxy-platform jobs plan-deploy-host` / `jobs plan-decommission-host` 的作用，是把这类操作先固定成平台可审阅的 dry-run plan 和 audit 入口，不替代上面的 authority path。
 
 当前 Lisahost worker 的真实运行形态是 `systemd + podman`，不是 `docker compose`。OAuth / auth 文件、`config.yaml`、日志目录通过 bind mount 保存在宿主机 `state/cliproxy-plus/` 下；usage 统计则需要依赖 `remote_proxy` 生命周期脚本的导出/导入保护，而不是把 `usage/` 目录误认为实时数据库。
 

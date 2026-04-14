@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 from dataclasses import dataclass
-import json
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +18,7 @@ class HostRecord:
     base_port: int
     subscription_alias: str
     enabled: bool
+    include_in_subscription: bool
     infra_core_candidate: bool
     change_policy: str
     provider: str
@@ -58,7 +59,7 @@ def load_host_registry(source: HostRegistrySource, workspace_root: str | Path) -
         if observations_path.exists():
             observations_payload = _load_mapping(observations_path)
 
-    nodes = [HostRecord(**item) for item in inventory_payload.get("nodes", [])]
+    nodes = [_host_record_from_mapping(item) for item in inventory_payload.get("nodes", [])]
     subscriptions = SubscriptionSettings(
         profile_name=str(subscriptions_payload["profile_name"]),
         subscription_base_url=str(subscriptions_payload["subscription_base_url"]),
@@ -84,12 +85,13 @@ def add_host_record(source: HostRegistrySource, workspace_root: str | Path, payl
     inventory_path = _resolve_source_path(root, source.inventory_path)
     inventory_payload = _load_mapping(inventory_path)
     nodes = list(inventory_payload.get("nodes", []))
-    if any(item["name"] == payload["name"] for item in nodes):
-        raise ValueError(f"host already exists: {payload['name']}")
-    nodes.append(payload)
+    record = _host_record_from_mapping(payload)
+    if any(item["name"] == record.name for item in nodes):
+        raise ValueError(f"host already exists: {record.name}")
+    nodes.append(asdict(record))
     inventory_payload["nodes"] = nodes
-    _write_mapping_as_json(inventory_path, inventory_payload)
-    return HostRecord(**payload)
+    _write_mapping_as_yaml(inventory_path, inventory_payload)
+    return record
 
 
 def remove_host_record(source: HostRegistrySource, workspace_root: str | Path, host_name: str) -> str:
@@ -101,7 +103,7 @@ def remove_host_record(source: HostRegistrySource, workspace_root: str | Path, h
     if len(remaining) == len(nodes):
         raise KeyError(host_name)
     inventory_payload["nodes"] = remaining
-    _write_mapping_as_json(inventory_path, inventory_payload)
+    _write_mapping_as_yaml(inventory_path, inventory_payload)
     return host_name
 
 
@@ -116,6 +118,24 @@ def _load_mapping(path: Path) -> dict[str, Any]:
     return payload
 
 
-def _write_mapping_as_json(path: Path, payload: dict[str, Any]) -> None:
+def _write_mapping_as_yaml(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    path.write_text(
+        yaml.safe_dump(payload, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
+
+
+def _host_record_from_mapping(payload: dict[str, Any]) -> HostRecord:
+    return HostRecord(
+        name=str(payload["name"]),
+        host=str(payload["host"]),
+        ssh_port=int(payload["ssh_port"]),
+        base_port=int(payload["base_port"]),
+        subscription_alias=str(payload["subscription_alias"]),
+        enabled=bool(payload["enabled"]),
+        include_in_subscription=bool(payload.get("include_in_subscription", True)),
+        infra_core_candidate=bool(payload["infra_core_candidate"]),
+        change_policy=str(payload["change_policy"]),
+        provider=str(payload["provider"]),
+    )

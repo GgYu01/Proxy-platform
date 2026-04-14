@@ -79,3 +79,40 @@
   - `apps/web-console/README.md` 说明当前已有最小 Web 控制台实现，未来完整前端仍是后续工作
 - 本轮 fresh verification：
   - `.venv_fix/bin/python -m pytest tests/test_manifest.py tests/test_cli.py tests/test_web_app.py -q` -> `34 passed`
+
+## 2026-04-14
+
+- 继续完成第二阶段 mutation job 合同硬化，而不是只停留在第一版可运行实现：
+  - 先补失败测试，再修改实现
+  - 目标是收紧 apply 安全边界和 operator 文档可执行性
+- 新增失败测试覆盖四类问题：
+  - manifest policy 漂移后旧计划不应继续 apply
+  - executor 漂移后旧计划不应继续 apply
+  - 已执行计划不能通过修改 `status` 重放
+  - CLI / Web 对受管目录内坏计划文件要返回受控错误
+- 修复了 mutation job 合同的三个结构性漏洞：
+  - apply 前重新读取当前 manifest policy，禁止旧计划越过新边界
+  - 审计中已有 `applied` 记录时拒绝 replay
+  - `load_job_plan()` 把缺失/损坏计划文件统一收敛为 `JobPlanIntegrityError`
+- 修复了 operator inventory 与订阅派生错位：
+  - `include_in_subscription` 现在正式进入 `inventory.HostRecord`
+  - 页面新增主机表单已支持 `include_in_subscription`
+  - 主机展示和订阅派生现在共同以 `enabled && include_in_subscription` 为准
+  - inventory 写回已恢复为 YAML 格式
+- 修复了 operator 文档的三类维护缺口：
+  - README / runbook 统一以 `.venv/bin/python` 作为示例入口
+  - README 单独补了 operator 前提，不再把 public bootstrap 和 operator 命令混写成一步
+  - `state/` 目录已被写入 workspace 布局和 `.gitignore`
+  - Web runbook 新增“真正上线前的决策门”说明
+- 使用多层 review 做交叉复核：
+  - 两个只读子代理分别审查代码合同和部署/文档口径
+  - OpenSpace 做了一轮只读外部审查，未发现新的严重 correctness bug
+  - OpenSpace 自动捕获了一个本地 review fallback skill，但当前未上传，因为它属于本轮本地工作流收敛产物
+- 本轮 fresh verification：
+  - `.venv_fix/bin/python -m pytest tests/test_jobs.py tests/test_cli.py tests/test_web_app.py -q` -> `40 passed`
+  - `.venv_fix/bin/python -m pytest -q` -> `73 passed`
+  - `.venv_fix/bin/python -m proxy_platform manifest validate --manifest platform.manifest.yaml` -> `manifest: ok (proxy-platform 0.1.0)`
+  - `.venv_fix/bin/python -m proxy_platform jobs -h` -> 新增 `plan-add-host / plan-remove-host / plan-deploy-host / plan-decommission-host / apply / audit-list`
+  - 本地真实进程 smoke：
+    - `.venv_fix/bin/python -m proxy_platform web --mode operator --host 127.0.0.1 --port 8765`
+    - `curl -fsS http://127.0.0.1:8765/ | rg -n "主机登记作业|明确确认后 apply|include_in_subscription"` 命中预期页面元素

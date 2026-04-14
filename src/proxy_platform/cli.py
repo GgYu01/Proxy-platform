@@ -6,6 +6,17 @@ import sys
 from pathlib import Path
 from typing import TextIO
 
+from proxy_platform.jobs import (
+    JobApplyUnsupportedError,
+    JobConfigError,
+    JobPlanIntegrityError,
+    apply_job_plan,
+    list_audit_records,
+    load_job_plan,
+    load_payload_file,
+    plan_job,
+    resolve_job_plan_path,
+)
 from proxy_platform.manifest import ManifestError, PlatformManifest, load_manifest
 from proxy_platform.inventory import load_host_registry
 from proxy_platform.projections import build_host_views, build_subscription_projection
@@ -227,6 +238,93 @@ def run_cli(argv: list[str], *, stdout: TextIO, stderr: TextIO | None = None) ->
             stdout.write(f"{line}\n")
         return 2 if _has_unresolved_repo_action(lines) else 0
 
+    if args.command == "jobs":
+        try:
+            if args.jobs_command == "plan-add-host":
+                plan = plan_job(
+                    manifest=manifest,
+                    workspace_root=workspace_root,
+                    mode=mode,
+                    job_kind="add_host",
+                    requested_by=args.requested_by,
+                    payload=load_payload_file(args.spec),
+                    output_path=args.output,
+                )
+                return _write_planned_job(stdout, plan)
+
+            if args.jobs_command == "plan-remove-host":
+                plan = plan_job(
+                    manifest=manifest,
+                    workspace_root=workspace_root,
+                    mode=mode,
+                    job_kind="remove_host",
+                    requested_by=args.requested_by,
+                    payload={"name": args.host_name},
+                    output_path=args.output,
+                )
+                return _write_planned_job(stdout, plan)
+
+            if args.jobs_command == "plan-deploy-host":
+                plan = plan_job(
+                    manifest=manifest,
+                    workspace_root=workspace_root,
+                    mode=mode,
+                    job_kind="deploy_host",
+                    requested_by=args.requested_by,
+                    payload={"name": args.host_name},
+                    output_path=args.output,
+                )
+                return _write_planned_job(stdout, plan)
+
+            if args.jobs_command == "plan-decommission-host":
+                plan = plan_job(
+                    manifest=manifest,
+                    workspace_root=workspace_root,
+                    mode=mode,
+                    job_kind="decommission_host",
+                    requested_by=args.requested_by,
+                    payload={"name": args.host_name},
+                    output_path=args.output,
+                )
+                return _write_planned_job(stdout, plan)
+
+            if args.jobs_command == "apply":
+                result = apply_job_plan(
+                    manifest=manifest,
+                    workspace_root=workspace_root,
+                    mode=mode,
+                    plan=load_job_plan(resolve_job_plan_path(manifest, workspace_root, mode, args.plan_file)),
+                    requested_by=args.requested_by,
+                    confirm=args.confirm,
+                )
+                stdout.write(
+                    "job applied: "
+                    f"id={result.job_id} status={result.status} audit_id={result.audit_id} "
+                    f"plan_path={result.plan_path}\n"
+                )
+                stdout.write(f"  effect: {result.effect}\n")
+                return 0
+
+            if args.jobs_command == "audit-list":
+                records = list_audit_records(manifest, workspace_root, mode)
+                stdout.write(f"audit: total={len(records)}\n")
+                for record in records:
+                    stdout.write(
+                        f"- {record.created_at}: event={record.event} job_id={record.job_id} "
+                        f"status={record.status} summary={record.summary}\n"
+                    )
+                return 0
+        except (
+            ManifestError,
+            JobConfigError,
+            JobApplyUnsupportedError,
+            JobPlanIntegrityError,
+            ValueError,
+            KeyError,
+        ) as exc:
+            stderr.write(f"{exc}\n")
+            return 2
+
     stderr.write("unsupported command\n")
     return 2
 
@@ -304,6 +402,69 @@ def _build_parser() -> argparse.ArgumentParser:
     providers_list_parser = providers_subparsers.add_parser("list", help="List provider retry/timeout budgets")
     providers_list_parser.add_argument("--manifest", default="platform.manifest.yaml")
 
+    jobs_parser = subparsers.add_parser("jobs", help="Mutation job planning, audit and apply entrypoints")
+    jobs_parser.add_argument("--manifest", default="platform.manifest.yaml")
+    jobs_parser.add_argument("--workspace-root", default=".")
+    jobs_parser.add_argument("--mode", default=None)
+    jobs_subparsers = jobs_parser.add_subparsers(dest="jobs_command", required=True)
+
+    jobs_plan_add_host_parser = jobs_subparsers.add_parser(
+        "plan-add-host",
+        help="Create an add-host job plan from a host spec file",
+    )
+    jobs_plan_add_host_parser.add_argument("--manifest", default="platform.manifest.yaml")
+    jobs_plan_add_host_parser.add_argument("--workspace-root", default=".")
+    jobs_plan_add_host_parser.add_argument("--mode", default=None)
+    jobs_plan_add_host_parser.add_argument("--requested-by", default="cli")
+    jobs_plan_add_host_parser.add_argument("--spec", required=True)
+    jobs_plan_add_host_parser.add_argument("--output", default=None)
+
+    jobs_plan_remove_host_parser = jobs_subparsers.add_parser(
+        "plan-remove-host",
+        help="Create a remove-host job plan",
+    )
+    jobs_plan_remove_host_parser.add_argument("--manifest", default="platform.manifest.yaml")
+    jobs_plan_remove_host_parser.add_argument("--workspace-root", default=".")
+    jobs_plan_remove_host_parser.add_argument("--mode", default=None)
+    jobs_plan_remove_host_parser.add_argument("--requested-by", default="cli")
+    jobs_plan_remove_host_parser.add_argument("--host-name", required=True)
+    jobs_plan_remove_host_parser.add_argument("--output", default=None)
+
+    jobs_plan_deploy_host_parser = jobs_subparsers.add_parser(
+        "plan-deploy-host",
+        help="Create a dry-run deploy-host job plan",
+    )
+    jobs_plan_deploy_host_parser.add_argument("--manifest", default="platform.manifest.yaml")
+    jobs_plan_deploy_host_parser.add_argument("--workspace-root", default=".")
+    jobs_plan_deploy_host_parser.add_argument("--mode", default=None)
+    jobs_plan_deploy_host_parser.add_argument("--requested-by", default="cli")
+    jobs_plan_deploy_host_parser.add_argument("--host-name", required=True)
+    jobs_plan_deploy_host_parser.add_argument("--output", default=None)
+
+    jobs_plan_decommission_host_parser = jobs_subparsers.add_parser(
+        "plan-decommission-host",
+        help="Create a dry-run decommission-host job plan",
+    )
+    jobs_plan_decommission_host_parser.add_argument("--manifest", default="platform.manifest.yaml")
+    jobs_plan_decommission_host_parser.add_argument("--workspace-root", default=".")
+    jobs_plan_decommission_host_parser.add_argument("--mode", default=None)
+    jobs_plan_decommission_host_parser.add_argument("--requested-by", default="cli")
+    jobs_plan_decommission_host_parser.add_argument("--host-name", required=True)
+    jobs_plan_decommission_host_parser.add_argument("--output", default=None)
+
+    jobs_apply_parser = jobs_subparsers.add_parser("apply", help="Apply a previously planned job")
+    jobs_apply_parser.add_argument("--manifest", default="platform.manifest.yaml")
+    jobs_apply_parser.add_argument("--workspace-root", default=".")
+    jobs_apply_parser.add_argument("--mode", default=None)
+    jobs_apply_parser.add_argument("--requested-by", default="cli")
+    jobs_apply_parser.add_argument("--plan-file", required=True)
+    jobs_apply_parser.add_argument("--confirm", action="store_true")
+
+    jobs_audit_list_parser = jobs_subparsers.add_parser("audit-list", help="List mutation job audit events")
+    jobs_audit_list_parser.add_argument("--manifest", default="platform.manifest.yaml")
+    jobs_audit_list_parser.add_argument("--workspace-root", default=".")
+    jobs_audit_list_parser.add_argument("--mode", default=None)
+
     web_parser = subparsers.add_parser("web", help="Run the minimal platform web console")
     web_parser.add_argument("--manifest", default="platform.manifest.yaml")
     web_parser.add_argument("--workspace-root", default=".")
@@ -334,3 +495,16 @@ def _require_host_registry_source(manifest: PlatformManifest, mode: str):
     if not manifest.host_registry.applies_to_mode(mode):
         raise ManifestError(f"host registry source is not configured for mode {mode}")
     return manifest.host_registry
+
+
+def _write_planned_job(stdout: TextIO, plan) -> int:
+    stdout.write(
+        "job planned: "
+        f"id={plan.job_id} kind={plan.job_kind} apply_supported={str(plan.apply_supported).lower()} "
+        f"executor={plan.executor} plan_path={plan.plan_path}\n"
+    )
+    for step in plan.preview_steps:
+        stdout.write(f"  preview: {step}\n")
+    for warning in plan.warnings:
+        stdout.write(f"  warning: {warning}\n")
+    return 0
