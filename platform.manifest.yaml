@@ -15,7 +15,7 @@ repos:
     visibility: public
     default_url: https://github.com/GgYu01/remote_proxy.git
     default_path: repos/remote_proxy
-    local_override_path: /workspaces/proxy_own/remote_proxy
+    local_override_path: /workspaces/proxy-platform/repos/remote_proxy
 
   - id: cliproxy_control_plane
     display_name: CliProxy-control-plane
@@ -25,7 +25,7 @@ repos:
     visibility: public
     default_url: https://github.com/GgYu01/CliProxy-control-plane.git
     default_path: repos/cliproxy-control-plane
-    local_override_path: /workspaces/temp/multi_repo_arch_analysis/CliProxy-control-plane
+    local_override_path: /workspaces/proxy-platform/repos/cliproxy-control-plane
 
   - id: proxy_ops_private
     display_name: Proxy_ops_private
@@ -35,7 +35,7 @@ repos:
     visibility: private
     default_url: git@github.com:GgYu01/Proxy_ops_private.git
     default_path: repos/proxy_ops_private
-    local_override_path: /workspaces/proxy_own/proxy_ops_private
+    local_override_path: /workspaces/proxy-platform/repos/proxy_ops_private
 
   - id: remote_browser
     display_name: remote_browser
@@ -45,7 +45,80 @@ repos:
     visibility: public
     default_url: https://github.com/GgYu01/remote_browser.git
     default_path: repos/remote_browser
-    local_override_path: /workspaces/temp/multi_repo_arch_analysis/remote_browser
+    local_override_path: /workspaces/proxy-platform/repos/remote_browser
+
+state:
+  host_registry:
+    inventory_path: repos/proxy_ops_private/inventory/nodes.yaml
+    subscriptions_path: repos/proxy_ops_private/inventory/subscriptions.yaml
+    observations_path: state/observations/hosts.json
+    required_modes: [operator]
+  local_providers:
+    - id: local_mcp_pool
+      display_name: Local MCP pool
+      kind: mcp
+      startup_timeout_seconds: 15
+      request_timeout_seconds: 45
+      startup_max_attempts: 3
+      request_max_attempts: 2
+    - id: remote_browser_adapter
+      display_name: remote_browser adapter
+      kind: browser
+      owner_repo_id: remote_browser
+      startup_timeout_seconds: 15
+      request_timeout_seconds: 45
+      startup_max_attempts: 2
+      request_max_attempts: 2
+
+state_sources:
+  - id: host_registry
+    display_name: Host Registry
+    description: 期望状态主机登记册，定义哪些主机属于平台现场清单
+    kind: host_registry
+    repo_id: proxy_ops_private
+    path: inventory/nodes.yaml
+    ownership: private_truth
+    required_modes: [operator]
+
+  - id: subscription_policy
+    display_name: Subscription Policy
+    description: 订阅发布策略与公开入口配置
+    kind: subscription_policy
+    repo_id: proxy_ops_private
+    path: inventory/subscriptions.yaml
+    ownership: private_truth
+    required_modes: [operator]
+
+  - id: host_observation
+    display_name: Host Observation Feed
+    description: 平台收集的远端 probe 或 agent 回报，用于展示现场观测状态
+    kind: host_observation
+    repo_id: proxy-platform
+    path: state/observations/hosts.json
+    ownership: platform_observed_state
+    required_modes: [public, operator]
+
+projections:
+  - id: host_console
+    display_name: Host Console View
+    description: 页面主机列表，基于登记册和观测状态共同生成
+    kind: host_console_projection
+    source_ids: [host_registry, host_observation]
+    required_modes: [operator]
+    rules:
+      include_expected_hosts: true
+      include_observation_only_hosts: false
+
+  - id: subscription_nodes
+    display_name: Subscription Nodes View
+    description: 订阅产物视图，基于登记册、订阅策略和观测状态派生
+    kind: subscription_projection
+    source_ids: [host_registry, subscription_policy, host_observation]
+    required_modes: [operator]
+    rules:
+      require_registry_enabled: true
+      include_unhealthy_observed_hosts: true
+      include_observation_only_hosts: false
 
 toolchains:
   - id: cliproxy_plus_standalone
@@ -93,7 +166,11 @@ toolchains:
 commands:
   doctor:
     description: 检查工作区仓库状态与宿主机 toolchain profile
+  hosts:
+    description: 读取主机登记册和观测回报，输出平台视角的主机状态视图
   init:
     description: 初始化工作区，支持 fetch / local override / clone 三类物化路径
+  subscriptions:
+    description: 基于主机登记册和观测回报预览订阅派生结果
   sync:
     description: 同步工作区仓库，支持 fetch / local override / clone 三类物化路径

@@ -58,6 +58,130 @@ def test_load_manifest_tracks_toolchain_profiles() -> None:
     assert docker_compose.fallback_argvs == [["docker-compose", "--version"]]
 
 
+def test_load_manifest_tracks_state_sources_and_projections() -> None:
+    manifest = load_manifest(Path(__file__).resolve().parents[1] / "platform.manifest.yaml")
+
+    host_registry = manifest.state_sources["host_registry"]
+    observation = manifest.state_sources["host_observation"]
+    subscription_projection = manifest.projections["subscription_nodes"]
+
+    assert manifest.host_registry is not None
+    assert manifest.host_registry.required_modes == ["operator"]
+    assert host_registry.kind == "host_registry"
+    assert host_registry.repo_id == "proxy_ops_private"
+    assert host_registry.path == Path("inventory/nodes.yaml")
+    assert host_registry.ownership == "private_truth"
+
+    assert observation.kind == "host_observation"
+    assert observation.repo_id == "proxy-platform"
+    assert observation.path == Path("state/observations/hosts.json")
+    assert observation.ownership == "platform_observed_state"
+
+    assert subscription_projection.kind == "subscription_projection"
+    assert subscription_projection.source_ids == [
+        "host_registry",
+        "subscription_policy",
+        "host_observation",
+    ]
+    assert subscription_projection.required_modes == ["operator"]
+    assert subscription_projection.rules["include_unhealthy_observed_hosts"] is True
+    assert subscription_projection.rules["require_registry_enabled"] is True
+
+
+def test_load_manifest_rejects_projection_with_unknown_source(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "platform.manifest.yaml"
+    manifest_path.write_text(
+        """
+platform:
+  name: proxy-platform
+  version: 0.1.0
+  default_mode: public
+  supported_modes: [public]
+repos:
+  - id: remote_proxy
+    display_name: remote_proxy
+    role: public_runtime_baseline
+    required_modes: [public]
+    optional: false
+    visibility: public
+    default_url: https://example.com/remote_proxy.git
+    default_path: repos/remote_proxy
+state_sources:
+  - id: host_registry
+    display_name: Host Registry
+    description: expected hosts
+    kind: host_registry
+    repo_id: remote_proxy
+    path: inventory/nodes.yaml
+    ownership: private_truth
+    required_modes: [public]
+projections:
+  - id: broken
+    display_name: broken
+    description: broken
+    kind: subscription_projection
+    source_ids: [host_registry, missing_source]
+    required_modes: [public]
+    rules:
+      include_unhealthy_observed_hosts: true
+commands: {}
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ManifestError):
+        load_manifest(manifest_path)
+
+
+def test_load_manifest_rejects_projection_mode_not_supported_by_its_sources(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "platform.manifest.yaml"
+    manifest_path.write_text(
+        """
+platform:
+  name: proxy-platform
+  version: 0.1.0
+  default_mode: public
+  supported_modes: [public, operator]
+repos:
+  - id: proxy_ops_private
+    display_name: Proxy_ops_private
+    role: private_ops_source_of_truth
+    required_modes: [operator]
+    optional: true
+    visibility: private
+    default_url: git@example.com/private.git
+    default_path: repos/proxy_ops_private
+state:
+  host_registry:
+    inventory_path: operator/nodes.yaml
+    subscriptions_path: operator/subscriptions.yaml
+    required_modes: [operator]
+state_sources:
+  - id: host_registry
+    display_name: Host Registry
+    description: expected hosts
+    kind: host_registry
+    repo_id: proxy_ops_private
+    path: inventory/nodes.yaml
+    ownership: private_truth
+    required_modes: [operator]
+projections:
+  - id: broken_public_projection
+    display_name: broken public projection
+    description: claims public visibility from private-only source
+    kind: host_console_projection
+    source_ids: [host_registry]
+    required_modes: [public]
+    rules: {}
+commands: {}
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ManifestError):
+        load_manifest(manifest_path)
+
+
 def test_load_manifest_rejects_duplicate_repo_ids(tmp_path: Path) -> None:
     manifest_path = tmp_path / "platform.manifest.yaml"
     manifest_path.write_text(
@@ -275,3 +399,55 @@ commands: {}
 
     manifest = load_manifest(manifest_path)
     assert manifest.repos[0].repo_id == "remote_proxy"
+
+
+def test_load_manifest_tracks_host_registry_and_local_provider_policies(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "platform.manifest.yaml"
+    manifest_path.write_text(
+        """
+platform:
+  name: proxy-platform
+  version: 0.1.0
+  default_mode: public
+  supported_modes: [public, operator]
+repos:
+  - id: remote_proxy
+    display_name: remote_proxy
+    role: public_runtime_baseline
+    required_modes: [public]
+    optional: false
+    visibility: public
+    default_url: https://example.com/remote_proxy.git
+    default_path: repos/remote_proxy
+state:
+  host_registry:
+    inventory_path: operator/nodes.yaml
+    subscriptions_path: operator/subscriptions.yaml
+    observations_path: state/observed/hosts.json
+  local_providers:
+    - id: local_mcp_pool
+      display_name: Local MCP pool
+      kind: mcp
+      startup_timeout_seconds: 15
+      request_timeout_seconds: 45
+      startup_max_attempts: 3
+      request_max_attempts: 2
+commands: {}
+""",
+        encoding="utf-8",
+    )
+
+    manifest = load_manifest(manifest_path)
+
+    assert manifest.host_registry is not None
+    assert manifest.host_registry.inventory_path == Path("operator/nodes.yaml")
+    assert manifest.host_registry.subscriptions_path == Path("operator/subscriptions.yaml")
+    assert manifest.host_registry.observations_path == Path("state/observed/hosts.json")
+    assert len(manifest.local_providers) == 1
+    provider = manifest.local_providers[0]
+    assert provider.provider_id == "local_mcp_pool"
+    assert provider.kind == "mcp"
+    assert provider.startup_timeout_seconds == 15
+    assert provider.request_timeout_seconds == 45
+    assert provider.startup_max_attempts == 3
+    assert provider.request_max_attempts == 2

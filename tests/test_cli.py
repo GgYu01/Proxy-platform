@@ -218,7 +218,368 @@ def test_sync_dry_run_command_emits_repo_actions(tmp_path: Path) -> None:
     output = stdout.getvalue()
     assert exit_code == 0
     assert "dry-run: sync workspace" in output
+
+
+def test_hosts_list_command_prints_expected_and_observed_state(tmp_path: Path) -> None:
+    operator_dir = tmp_path / "operator"
+    observed_dir = tmp_path / "state" / "observed"
+    operator_dir.mkdir(parents=True)
+    observed_dir.mkdir(parents=True)
+    (operator_dir / "nodes.yaml").write_text(
+        """
+nodes:
+  - name: lisahost
+    host: 38.34.8.59
+    ssh_port: 27823
+    base_port: 10000
+    subscription_alias: GG-Lisa-Stable
+    enabled: true
+    infra_core_candidate: true
+    change_policy: frozen
+    provider: Lisahost
+""",
+        encoding="utf-8",
+    )
+    (operator_dir / "subscriptions.yaml").write_text(
+        """
+profile_name: GG Proxy Nodes
+subscription_base_url: https://example.com/subscriptions
+hiddify_fragment_name: GG Proxy Nodes
+remote_profile_name: GG Proxy Nodes Remote
+update_interval_hours: 12
+""",
+        encoding="utf-8",
+    )
+    (observed_dir / "hosts.json").write_text(
+        """
+hosts:
+  - name: lisahost
+    health: healthy
+    source: remote_probe
+    observed_at: 2026-04-14T10:00:00Z
+    detail: podman active
+""",
+        encoding="utf-8",
+    )
+    manifest_path = tmp_path / "platform.manifest.yaml"
+    manifest_path.write_text(
+        """
+platform:
+  name: proxy-platform
+  version: 0.1.0
+  default_mode: public
+  supported_modes: [public, operator]
+repos: []
+state:
+  host_registry:
+    inventory_path: operator/nodes.yaml
+    subscriptions_path: operator/subscriptions.yaml
+    observations_path: state/observed/hosts.json
+    required_modes: [operator]
+  local_providers:
+    - id: local_mcp_pool
+      display_name: Local MCP pool
+      kind: mcp
+      startup_timeout_seconds: 15
+      request_timeout_seconds: 45
+      startup_max_attempts: 3
+      request_max_attempts: 2
+commands: {}
+""",
+        encoding="utf-8",
+    )
+
+    stdout = StringIO()
+    exit_code = run_cli(
+        [
+            "hosts",
+            "list",
+            "--manifest",
+            str(manifest_path),
+            "--workspace-root",
+            str(tmp_path),
+            "--mode",
+            "operator",
+        ],
+        stdout=stdout,
+    )
+
+    output = stdout.getvalue()
+    assert exit_code == 0
+    assert "hosts: total=1 publishable=1" in output
+    assert "lisahost" in output
+    assert "observed=healthy" in output
+    assert "publish=true" in output
+
+
+def test_subscriptions_list_command_prints_multi_and_per_node_urls(tmp_path: Path) -> None:
+    operator_dir = tmp_path / "operator"
+    operator_dir.mkdir(parents=True)
+    (operator_dir / "nodes.yaml").write_text(
+        """
+nodes:
+  - name: lisahost
+    host: 38.34.8.59
+    ssh_port: 27823
+    base_port: 10000
+    subscription_alias: GG-Lisa-Stable
+    enabled: true
+    infra_core_candidate: true
+    change_policy: frozen
+    provider: Lisahost
+""",
+        encoding="utf-8",
+    )
+    (operator_dir / "subscriptions.yaml").write_text(
+        """
+profile_name: GG Proxy Nodes
+subscription_base_url: https://example.com/subscriptions
+hiddify_fragment_name: GG Proxy Nodes
+remote_profile_name: GG Proxy Nodes Remote
+update_interval_hours: 12
+""",
+        encoding="utf-8",
+    )
+    manifest_path = tmp_path / "platform.manifest.yaml"
+    manifest_path.write_text(
+        """
+platform:
+  name: proxy-platform
+  version: 0.1.0
+  default_mode: public
+  supported_modes: [public, operator]
+repos: []
+state:
+  host_registry:
+    inventory_path: operator/nodes.yaml
+    subscriptions_path: operator/subscriptions.yaml
+    required_modes: [operator]
+commands: {}
+""",
+        encoding="utf-8",
+    )
+
+    stdout = StringIO()
+    exit_code = run_cli(
+        [
+            "subscriptions",
+            "list",
+            "--manifest",
+            str(manifest_path),
+            "--workspace-root",
+            str(tmp_path),
+            "--mode",
+            "operator",
+        ],
+        stdout=stdout,
+    )
+
+    output = stdout.getvalue()
+    assert exit_code == 0
+    assert "multi_node_url=https://example.com/subscriptions/v2ray_nodes.txt" in output
+    assert "lisahost" in output
+    assert "v2ray_url=https://example.com/subscriptions/v2ray_node_lisahost.txt" in output
+
+
+def test_hosts_list_command_rejects_public_mode_when_registry_is_operator_only(tmp_path: Path) -> None:
+    operator_dir = tmp_path / "operator"
+    operator_dir.mkdir(parents=True)
+    (operator_dir / "nodes.yaml").write_text("nodes: []\n", encoding="utf-8")
+    (operator_dir / "subscriptions.yaml").write_text(
+        """
+profile_name: GG Proxy Nodes
+subscription_base_url: https://example.com/subscriptions
+hiddify_fragment_name: GG Proxy Nodes
+remote_profile_name: GG Proxy Nodes Remote
+update_interval_hours: 12
+""",
+        encoding="utf-8",
+    )
+    manifest_path = tmp_path / "platform.manifest.yaml"
+    manifest_path.write_text(
+        """
+platform:
+  name: proxy-platform
+  version: 0.1.0
+  default_mode: public
+  supported_modes: [public, operator]
+repos: []
+state:
+  host_registry:
+    inventory_path: operator/nodes.yaml
+    subscriptions_path: operator/subscriptions.yaml
+    required_modes: [operator]
+commands: {}
+""",
+        encoding="utf-8",
+    )
+
+    stdout = StringIO()
+    stderr = StringIO()
+    exit_code = run_cli(
+        [
+            "hosts",
+            "list",
+            "--manifest",
+            str(manifest_path),
+            "--workspace-root",
+            str(tmp_path),
+        ],
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 2
+    assert "host registry source is not configured for mode public" in stderr.getvalue()
+
+
+def test_providers_list_command_prints_timeout_and_retry_budgets(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "platform.manifest.yaml"
+    manifest_path.write_text(
+        """
+platform:
+  name: proxy-platform
+  version: 0.1.0
+  default_mode: public
+  supported_modes: [public]
+repos: []
+state:
+  host_registry:
+    inventory_path: operator/nodes.yaml
+    subscriptions_path: operator/subscriptions.yaml
+  local_providers:
+    - id: local_mcp_pool
+      display_name: Local MCP pool
+      kind: mcp
+      startup_timeout_seconds: 15
+      request_timeout_seconds: 45
+      startup_max_attempts: 3
+      request_max_attempts: 2
+commands: {}
+""",
+        encoding="utf-8",
+    )
+
+    stdout = StringIO()
+    exit_code = run_cli(
+        [
+            "providers",
+            "list",
+            "--manifest",
+            str(manifest_path),
+        ],
+        stdout=stdout,
+    )
+
+    output = stdout.getvalue()
+    assert exit_code == 0
+    assert "providers: total=1" in output
+    assert "local_mcp_pool" in output
+    assert "startup_timeout=15" in output
+    assert "request_attempts=2" in output
+
     assert "cliproxy_control_plane" in output
+
+
+def test_hosts_list_command_projects_registry_and_observations(tmp_path: Path) -> None:
+    registry_path = tmp_path / "registry.yaml"
+    registry_path.write_text(
+        """
+hosts:
+  - host_id: lisahost
+    display_name: Lisahost
+    endpoint: https://lisa.example.com/sub
+    provider: cliproxy_plus
+    enabled: true
+    include_in_subscription: true
+""",
+        encoding="utf-8",
+    )
+    observations_path = tmp_path / "observations.yaml"
+    observations_path.write_text(
+        """
+observations:
+  - host_id: lisahost
+    status: healthy
+    source: probe
+""",
+        encoding="utf-8",
+    )
+    stdout = StringIO()
+
+    exit_code = run_cli(
+        [
+            "hosts",
+            "--registry",
+            str(registry_path),
+            "--observations",
+            str(observations_path),
+        ],
+        stdout=stdout,
+    )
+
+    output = stdout.getvalue()
+    assert exit_code == 0
+    assert "lisahost" in output
+    assert "desired=enabled" in output
+    assert "observed=healthy" in output
+    assert "subscription=true" in output
+
+
+def test_subscriptions_preview_command_reports_members_and_exclusions(tmp_path: Path) -> None:
+    registry_path = tmp_path / "registry.yaml"
+    registry_path.write_text(
+        """
+hosts:
+  - host_id: lisahost
+    display_name: Lisahost
+    endpoint: https://lisa.example.com/sub
+    provider: cliproxy_plus
+    enabled: true
+    include_in_subscription: true
+  - host_id: drain
+    display_name: Drain
+    endpoint: https://drain.example.com/sub
+    provider: cliproxy_plus
+    enabled: false
+    include_in_subscription: true
+""",
+        encoding="utf-8",
+    )
+    observations_path = tmp_path / "observations.yaml"
+    observations_path.write_text(
+        """
+observations:
+  - host_id: lisahost
+    status: down
+    source: agent
+  - host_id: stray
+    status: healthy
+    source: probe
+""",
+        encoding="utf-8",
+    )
+    stdout = StringIO()
+
+    exit_code = run_cli(
+        [
+            "subscriptions",
+            "preview",
+            "--registry",
+            str(registry_path),
+            "--observations",
+            str(observations_path),
+        ],
+        stdout=stdout,
+    )
+
+    output = stdout.getvalue()
+    assert exit_code == 0
+    assert "subscription-preview: members=1" in output
+    assert "- lisahost:" in output
+    assert "observed=down" in output
+    assert "excluded hosts: drain" in output
+    assert "unknown observation hosts: stray" in output
 
 
 def test_init_without_dry_run_links_local_override_repo(tmp_path: Path) -> None:

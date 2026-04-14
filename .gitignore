@@ -1,8 +1,11 @@
 .venv/
+.venv_fix/
 __pycache__/
 .pytest_cache/
 *.pyc
 dist/
 build/
 *.egg-info/
+context-engine-*.log
 repos/
+archive/
