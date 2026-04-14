@@ -12,6 +12,8 @@ class HostView:
     host: str
     ssh_port: int
     provider: str
+    deployment_topology: str
+    runtime_service: str
     change_policy: str
     enabled: bool
     include_in_subscription: bool
@@ -50,6 +52,8 @@ def build_host_views(registry: HostRegistry) -> list[HostView]:
                 host=node.host,
                 ssh_port=node.ssh_port,
                 provider=node.provider,
+                deployment_topology=node.deployment_topology,
+                runtime_service=node.runtime_service,
                 change_policy=node.change_policy,
                 enabled=node.enabled,
                 include_in_subscription=node.include_in_subscription,

@@ -159,6 +159,7 @@ def create_app(
                 "<tr>"
                 f"<td>{escape(item['name'])}</td>"
                 f"<td>{escape(item['provider'])}</td>"
+                f"<td>{escape(item['deployment_topology'])}</td>"
                 f"<td>{escape(item['observed_health'])}</td>"
                 f"<td>{escape(str(item['should_publish']).lower())}</td>"
                 "</tr>"
@@ -216,6 +217,19 @@ def create_app(
             </select>
           </label>
         </div>
+        <div class="inline">
+          <label>deployment_topology
+            <select name="deployment_topology">
+              <option value="standalone_vps">standalone_vps</option>
+              <option value="infra_core_sidecar">infra_core_sidecar</option>
+            </select>
+          </label>
+          <label>runtime_service
+            <select name="runtime_service">
+              <option value="cliproxy-plus">cliproxy-plus</option>
+            </select>
+          </label>
+        </div>
         <label><input name="enabled" type="checkbox" checked /> enabled</label>
         <label><input name="include_in_subscription" type="checkbox" checked /> include_in_subscription</label>
         <label><input name="infra_core_candidate" type="checkbox" checked /> infra_core_candidate</label>
@@ -226,7 +240,7 @@ def create_app(
         <button type="submit">先生成移除计划</button>
       </form>
       <form id="remote-plan-form">
-        <label>远端 dry-run 主机名<input name="name" required /></label>
+        <label>远端移交单主机名<input name="name" required /></label>
         <div class="inline">
           <button type="button" data-remote-kind="deploy_host">计划部署</button>
           <button type="button" data-remote-kind="decommission_host">计划摘除</button>
@@ -236,11 +250,11 @@ def create_app(
         <label>待 apply 的计划文件路径<input id="apply-plan-path" name="plan_path" required /></label>
         <button type="submit">明确确认后 apply</button>
       </form>
-      <p id="job-status">这里会显示最近一次作业 plan / apply 结果。页面不会自动跳过 apply 审核步骤。</p>
+      <p id="job-status">这里会显示最近一次作业 plan / apply 结果。远端部署类作业在当前阶段只会生成 authority handoff 移交单，不会由页面直接 SSH 执行。</p>
     </section>
     <section>
       <h2>作业审计</h2>
-      <ul>"""
+      <ul id="audit-list">"""
             job_section += audit_rows or "<li>当前还没有审计事件。</li>"
             job_section += """</ul>
     </section>"""
@@ -249,9 +263,19 @@ def create_app(
     <script>
       const statusNode = document.getElementById("job-status");
       const applyPlanPathInput = document.getElementById("apply-plan-path");
+      const auditListNode = document.getElementById("audit-list");
 
       async function copyText(text) {
         await navigator.clipboard.writeText(text);
+      }
+
+      function escapeHtml(value) {
+        return String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
       }
 
       async function createPlan(jobKind, payload) {
@@ -288,6 +312,15 @@ def create_app(
           `apply_supported: ${plan.apply_supported}`,
           `plan_path: ${plan.plan_path}`,
         ];
+        if (plan.authority_adapter_id) {
+          lines.push(`authority_adapter: ${plan.authority_adapter_id}`);
+        }
+        if (plan.authority_topology) {
+          lines.push(`authority_topology: ${plan.authority_topology}`);
+        }
+        if (plan.handoff_action) {
+          lines.push(`handoff_action: ${plan.handoff_action}`);
+        }
         for (const step of plan.preview_steps) {
           lines.push(`preview: ${step}`);
         }
@@ -301,8 +334,11 @@ def create_app(
         return [
           `applied: ${result.job_id}`,
           `status: ${result.status}`,
+          `executor: ${result.executor}`,
           `audit_id: ${result.audit_id}`,
           `effect: ${result.effect}`,
+          `authority_adapter: ${result.authority_adapter_id || "none"}`,
+          `handoff_path: ${result.handoff_path || "none"}`,
         ].join("\\n");
       }
 
@@ -311,6 +347,31 @@ def create_app(
           applyPlanPathInput.value = plan.plan_path;
         }
         statusNode.textContent = formatPlan(plan);
+      }
+
+      function renderAudits(jobs) {
+        if (!auditListNode) {
+          return;
+        }
+        if (!jobs.length) {
+          auditListNode.innerHTML = "<li>当前还没有审计事件。</li>";
+          return;
+        }
+        auditListNode.innerHTML = jobs.slice(0, 10).map((item) => (
+          `<li>${escapeHtml(item.created_at)}: event=${escapeHtml(item.event)} job=${escapeHtml(item.job_kind)} status=${escapeHtml(item.status)} summary=${escapeHtml(item.summary)}</li>`
+        )).join("");
+      }
+
+      async function refreshAudits() {
+        if (!auditListNode) {
+          return;
+        }
+        const response = await fetch("/api/jobs");
+        const body = await response.json();
+        if (!response.ok) {
+          throw new Error(body.detail || "load jobs failed");
+        }
+        renderAudits(body.jobs || []);
       }
 
       document.querySelectorAll("[data-copy]").forEach((button) => {
@@ -334,6 +395,8 @@ def create_app(
             infra_core_candidate: data.get("infra_core_candidate") === "on",
             change_policy: data.get("change_policy"),
             provider: data.get("provider"),
+            deployment_topology: data.get("deployment_topology"),
+            runtime_service: data.get("runtime_service"),
           };
           try {
             rememberPlan(await createPlan("add_host", payload));
@@ -372,7 +435,7 @@ def create_app(
           try {
             const result = await applyPlan(applyPlanPathInput.value);
             statusNode.textContent = `${statusNode.textContent}\\n\\n${formatResult(result)}`;
-            window.location.reload();
+            await refreshAudits();
           } catch (error) {
             statusNode.textContent = String(error);
           }
@@ -446,7 +509,7 @@ def create_app(
       <h2>主机现场清单</h2>
       <table>
         <thead>
-          <tr><th>name</th><th>provider</th><th>observed</th><th>publish</th></tr>
+          <tr><th>name</th><th>provider</th><th>topology</th><th>observed</th><th>publish</th></tr>
         </thead>
         <tbody>{host_rows}</tbody>
       </table>
@@ -492,6 +555,7 @@ def _serialize_job_plan(plan) -> dict[str, Any]:
 def _serialize_job_apply_result(result) -> dict[str, Any]:
     payload = asdict(result)
     payload["plan_path"] = str(result.plan_path)
+    payload["handoff_path"] = str(result.handoff_path) if result.handoff_path is not None else None
     return payload
 
 

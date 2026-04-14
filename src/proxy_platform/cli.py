@@ -118,7 +118,8 @@ def run_cli(argv: list[str], *, stdout: TextIO, stderr: TextIO | None = None) ->
         for view in views:
             stdout.write(
                 f"- {view.name}: observed={view.observed_health} publish={str(view.should_publish).lower()} "
-                f"provider={view.provider} host={view.host} ssh_port={view.ssh_port} "
+                f"provider={view.provider} topology={view.deployment_topology} "
+                f"service={view.runtime_service} host={view.host} ssh_port={view.ssh_port} "
                 f"change_policy={view.change_policy}\n"
             )
         return 0
@@ -300,8 +301,13 @@ def run_cli(argv: list[str], *, stdout: TextIO, stderr: TextIO | None = None) ->
                 stdout.write(
                     "job applied: "
                     f"id={result.job_id} status={result.status} audit_id={result.audit_id} "
-                    f"plan_path={result.plan_path}\n"
+                    f"executor={result.executor} plan_path={result.plan_path}"
                 )
+                if result.authority_adapter_id:
+                    stdout.write(f" authority_adapter={result.authority_adapter_id}")
+                if result.handoff_path is not None:
+                    stdout.write(f" handoff_path={result.handoff_path}")
+                stdout.write("\n")
                 stdout.write(f"  effect: {result.effect}\n")
                 return 0
 
@@ -432,7 +438,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     jobs_plan_deploy_host_parser = jobs_subparsers.add_parser(
         "plan-deploy-host",
-        help="Create a dry-run deploy-host job plan",
+        help="Create a deploy-host authority handoff plan",
     )
     jobs_plan_deploy_host_parser.add_argument("--manifest", default="platform.manifest.yaml")
     jobs_plan_deploy_host_parser.add_argument("--workspace-root", default=".")
@@ -443,7 +449,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     jobs_plan_decommission_host_parser = jobs_subparsers.add_parser(
         "plan-decommission-host",
-        help="Create a dry-run decommission-host job plan",
+        help="Create a decommission-host authority handoff plan",
     )
     jobs_plan_decommission_host_parser.add_argument("--manifest", default="platform.manifest.yaml")
     jobs_plan_decommission_host_parser.add_argument("--workspace-root", default=".")
@@ -503,6 +509,18 @@ def _write_planned_job(stdout: TextIO, plan) -> int:
         f"id={plan.job_id} kind={plan.job_kind} apply_supported={str(plan.apply_supported).lower()} "
         f"executor={plan.executor} plan_path={plan.plan_path}\n"
     )
+    if plan.authority_adapter_id:
+        stdout.write(
+            f"  authority: adapter={plan.authority_adapter_id} topology={plan.authority_topology} "
+            f"action={plan.handoff_action}\n"
+        )
+        if plan.authority_contract is not None:
+            stdout.write(
+                "  handoff: "
+                f"owner={plan.authority_contract['owner_repo_id']} "
+                f"method={plan.authority_contract['handoff_method']} "
+                f"entrypoint={plan.authority_contract['entrypoint']}\n"
+            )
     for step in plan.preview_steps:
         stdout.write(f"  preview: {step}\n")
     for warning in plan.warnings:

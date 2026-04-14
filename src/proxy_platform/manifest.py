@@ -71,6 +71,7 @@ class JobPolicySpec:
 @dataclass(frozen=True)
 class JobsConfig:
     audit_path: Path
+    handoff_path: Path | None
     required_modes: list[str]
     require_confirmation: bool
     policies: tuple[JobPolicySpec, ...]
@@ -95,6 +96,31 @@ class StateSourceSpec:
     path: Path
     ownership: str
     required_modes: list[str]
+
+    def applies_to_mode(self, mode: str) -> bool:
+        return mode in self.required_modes
+
+
+@dataclass(frozen=True)
+class AuthorityAdapterSpec:
+    adapter_id: str
+    display_name: str
+    owner_repo_id: str
+    required_modes: list[str]
+    job_kinds: list[str]
+    topology: str
+    runtime_service: str
+    handoff_method: str
+    entrypoint: Path
+    service_name: str | None
+    actions: dict[str, str]
+    required_paths: tuple[Path, ...]
+    downstream_required_paths: tuple[Path, ...]
+    required_env_files: tuple[Path, ...]
+    required_env_keys: tuple[str, ...]
+    rollback_owner: str
+    rollback_hint: str
+    notes: tuple[str, ...]
 
     def applies_to_mode(self, mode: str) -> bool:
         return mode in self.required_modes
@@ -152,6 +178,7 @@ class PlatformManifest:
     repos: list[RepoSpec]
     host_registry_source: HostRegistrySource | None
     jobs: JobsConfig | None
+    authority_adapters: dict[str, AuthorityAdapterSpec]
     local_providers: tuple[LocalProviderSpec, ...]
     state_sources: dict[str, StateSourceSpec]
     projections: dict[str, ProjectionSpec]
@@ -249,6 +276,7 @@ def load_manifest(path: str | Path) -> PlatformManifest:
     if jobs_payload:
         jobs_config = JobsConfig(
             audit_path=Path(jobs_payload["audit_path"]),
+            handoff_path=Path(jobs_payload["handoff_path"]) if jobs_payload.get("handoff_path") else None,
             required_modes=list(jobs_payload.get("required_modes", platform["supported_modes"])),
             require_confirmation=bool(jobs_payload.get("require_confirmation", True)),
             policies=tuple(
@@ -260,6 +288,33 @@ def load_manifest(path: str | Path) -> PlatformManifest:
                 for item in jobs_payload.get("kinds", [])
             ),
         )
+    authority_adapter_items = payload.get("authority_adapters", [])
+    authority_adapter_ids = [item["id"] for item in authority_adapter_items]
+    if len(set(authority_adapter_ids)) != len(authority_adapter_ids):
+        raise ManifestError("duplicate authority adapter ids are not allowed")
+    authority_adapters = {
+        item["id"]: AuthorityAdapterSpec(
+            adapter_id=item["id"],
+            display_name=item["display_name"],
+            owner_repo_id=item["owner_repo_id"],
+            required_modes=list(item["required_modes"]),
+            job_kinds=list(item["job_kinds"]),
+            topology=str(item["topology"]),
+            runtime_service=str(item["runtime_service"]),
+            handoff_method=str(item["handoff_method"]),
+            entrypoint=Path(item["entrypoint"]),
+            service_name=item.get("service_name"),
+            actions={str(key): str(value) for key, value in (item.get("actions") or {}).items()},
+            required_paths=tuple(Path(value) for value in item.get("required_paths", [])),
+            downstream_required_paths=tuple(Path(value) for value in item.get("downstream_required_paths", [])),
+            required_env_files=tuple(Path(value) for value in item.get("required_env_files", [])),
+            required_env_keys=tuple(str(value) for value in item.get("required_env_keys", [])),
+            rollback_owner=str(item["rollback_owner"]),
+            rollback_hint=str(item["rollback_hint"]),
+            notes=tuple(str(value) for value in item.get("notes", [])),
+        )
+        for item in authority_adapter_items
+    }
     local_providers = tuple(
         LocalProviderSpec(
             provider_id=item["id"],
@@ -316,6 +371,7 @@ def load_manifest(path: str | Path) -> PlatformManifest:
         repos=repos,
         host_registry_source=host_registry_source,
         jobs=jobs_config,
+        authority_adapters=authority_adapters,
         local_providers=local_providers,
         state_sources=state_sources,
         projections=projections,
@@ -444,6 +500,55 @@ def _validate_jobs_alignment(manifest: PlatformManifest) -> None:
     policy_ids = [policy.job_kind for policy in jobs.policies]
     if len(set(policy_ids)) != len(policy_ids):
         raise ManifestError("duplicate job policy ids are not allowed")
+
+    if any(policy.executor == "authority_handoff" for policy in jobs.policies) and jobs.handoff_path is None:
+        raise ManifestError("jobs.handoff_path is required when authority_handoff executor is used")
+
+    authority_adapters = manifest.authority_adapters
+    repo_id_set = {repo.repo_id for repo in manifest.repos}
+    for adapter in authority_adapters.values():
+        invalid_modes = [mode for mode in adapter.required_modes if mode not in manifest.supported_modes]
+        if invalid_modes:
+            raise ManifestError(f"authority adapter {adapter.adapter_id} uses unsupported mode {invalid_modes[0]}")
+        if adapter.owner_repo_id not in repo_id_set:
+            raise ManifestError(
+                f"authority adapter {adapter.adapter_id} references unknown repo {adapter.owner_repo_id}"
+            )
+        if adapter.handoff_method not in {"service_script", "runbook_only"}:
+            raise ManifestError(
+                f"authority adapter {adapter.adapter_id} uses unsupported handoff_method {adapter.handoff_method}"
+            )
+        if adapter.handoff_method == "service_script" and not adapter.service_name:
+            raise ManifestError(f"authority adapter {adapter.adapter_id} requires service_name")
+        missing_actions = [job_kind for job_kind in adapter.job_kinds if job_kind not in adapter.actions]
+        if missing_actions:
+            raise ManifestError(
+                f"authority adapter {adapter.adapter_id} is missing actions for {', '.join(missing_actions)}"
+            )
+        for job_kind in adapter.job_kinds:
+            try:
+                policy = jobs.policy_for(job_kind)
+            except KeyError as exc:
+                raise ManifestError(
+                    f"authority adapter {adapter.adapter_id} references unknown job kind {job_kind}"
+                ) from exc
+            if policy.executor != "authority_handoff":
+                raise ManifestError(
+                    f"authority adapter {adapter.adapter_id} references job kind {job_kind} "
+                    f"but executor is {policy.executor}"
+                )
+
+    for policy in jobs.policies:
+        if policy.executor != "authority_handoff":
+            continue
+        matching_adapters = [
+            adapter
+            for adapter in authority_adapters.values()
+            if policy.job_kind in adapter.job_kinds
+            and any(mode in adapter.required_modes for mode in jobs.required_modes)
+        ]
+        if not matching_adapters:
+            raise ManifestError(f"job policy {policy.job_kind} uses authority_handoff but no adapter is configured")
 
 
 def _validate_projection_mode_coverage(manifest: PlatformManifest) -> None:

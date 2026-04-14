@@ -14,6 +14,10 @@ from uuid import uuid4
 
 import yaml
 
+from proxy_platform.authority import AuthorityAdapterError
+from proxy_platform.authority import build_authority_handoff
+from proxy_platform.authority import resolve_authority_adapter
+from proxy_platform.authority import validate_authority_prerequisites
 from proxy_platform.inventory import add_host_record
 from proxy_platform.inventory import load_host_registry
 from proxy_platform.inventory import remove_host_record
@@ -49,6 +53,10 @@ class JobPlan:
     preview_steps: tuple[str, ...]
     source_refs: tuple[str, ...]
     warnings: tuple[str, ...]
+    authority_adapter_id: str | None
+    authority_topology: str | None
+    handoff_action: str | None
+    authority_contract: dict[str, Any] | None
     status: str
     plan_path: Path
     plan_digest: str
@@ -74,8 +82,11 @@ class JobApplyResult:
     job_id: str
     status: str
     audit_id: str
+    executor: str
     effect: str
     plan_path: Path
+    handoff_path: Path | None
+    authority_adapter_id: str | None
 
 
 def plan_job(
@@ -95,7 +106,9 @@ def plan_job(
     registry = load_host_registry(host_registry, root)
     now = _now()
     job_id = _build_job_id(now, job_kind)
-    summary, preview_steps, source_refs, warnings = _plan_details(
+    summary, preview_steps, source_refs, warnings, authority_info = _plan_details(
+        manifest=manifest,
+        mode=mode,
         job_kind=job_kind,
         payload=payload,
         registry=registry,
@@ -116,6 +129,10 @@ def plan_job(
         preview_steps=tuple(preview_steps),
         source_refs=tuple(source_refs),
         warnings=tuple(warnings),
+        authority_adapter_id=authority_info.adapter_id if authority_info else None,
+        authority_topology=authority_info.topology if authority_info else None,
+        handoff_action=authority_info.action if authority_info else None,
+        authority_contract=_authority_contract_payload(authority_info) if authority_info else None,
         status="planned",
         plan_path=plan_path,
         plan_digest="",
@@ -173,12 +190,43 @@ def apply_job_plan(
     _validate_current_job_policy(jobs, plan)
 
     host_registry = _require_host_registry(manifest, mode)
-    effect = _apply_supported_job(
-        job_kind=plan.job_kind,
-        payload=plan.payload,
-        host_registry_source=host_registry,
-        workspace_root=root,
-    )
+    handoff_path: Path | None = None
+    authority_adapter_id = plan.authority_adapter_id
+    if plan.executor == "inventory_only":
+        effect = _apply_supported_job(
+            job_kind=plan.job_kind,
+            payload=plan.payload,
+            host_registry_source=host_registry,
+            workspace_root=root,
+        )
+    elif plan.executor == "authority_handoff":
+        host_record, authority_resolution = _validate_current_authority_resolution(
+            manifest=manifest,
+            workspace_root=root,
+            mode=mode,
+            plan=plan,
+        )
+        handoff = build_authority_handoff(
+            jobs=jobs,
+            workspace_root=root,
+            requested_by=requested_by,
+            job_id=plan.job_id,
+            job_kind=plan.job_kind,
+            mode=mode,
+            created_at=_isoformat(_now()),
+            plan_path=plan.plan_path,
+            plan_digest=plan.plan_digest,
+            host_record=host_record,
+            resolution=authority_resolution,
+        )
+        handoff_path = handoff.handoff_path
+        authority_adapter_id = authority_resolution.adapter_id
+        effect = (
+            f"authority handoff created for host {host_record.name} via "
+            f"{authority_resolution.adapter_id}"
+        )
+    else:
+        raise JobApplyUnsupportedError(f"job executor {plan.executor} is not supported")
     updated = replace(plan, status="applied")
     _write_job_plan(updated)
     audit_id = f"{plan.job_id}-applied"
@@ -203,8 +251,11 @@ def apply_job_plan(
         job_id=plan.job_id,
         status="applied",
         audit_id=audit_id,
+        executor=plan.executor,
         effect=effect,
         plan_path=plan.plan_path,
+        handoff_path=handoff_path,
+        authority_adapter_id=authority_adapter_id,
     )
 
 
@@ -230,6 +281,14 @@ def load_job_plan(path: str | Path) -> JobPlan:
         preview_steps=tuple(str(item) for item in payload["preview_steps"]),
         source_refs=tuple(str(item) for item in payload["source_refs"]),
         warnings=tuple(str(item) for item in payload.get("warnings", [])),
+        authority_adapter_id=(
+            str(payload["authority_adapter_id"]) if payload.get("authority_adapter_id") is not None else None
+        ),
+        authority_topology=(
+            str(payload["authority_topology"]) if payload.get("authority_topology") is not None else None
+        ),
+        handoff_action=str(payload["handoff_action"]) if payload.get("handoff_action") is not None else None,
+        authority_contract=(dict(payload["authority_contract"]) if payload.get("authority_contract") is not None else None),
         status=str(payload["status"]),
         plan_path=Path(payload["plan_path"]).resolve(),
         plan_digest=str(payload["plan_digest"]),
@@ -326,11 +385,13 @@ def _find_applied_audit_record(
 
 def _plan_details(
     *,
+    manifest: PlatformManifest,
+    mode: str,
     job_kind: str,
     payload: dict[str, Any],
     registry,
     host_inventory_path: Path,
-) -> tuple[str, list[str], list[str], list[str]]:
+) -> tuple[str, list[str], list[str], list[str], Any | None]:
     node_names = {node.name for node in registry.nodes}
     if job_kind == "add_host":
         _validate_add_host_payload(payload)
@@ -346,6 +407,7 @@ def _plan_details(
             ],
             [str(host_inventory_path)],
             [],
+            None,
         )
     if job_kind == "remove_host":
         name = str(payload["name"])
@@ -360,34 +422,61 @@ def _plan_details(
             ],
             [str(host_inventory_path)],
             [],
+            None,
         )
     if job_kind == "deploy_host":
         name = str(payload["name"])
         if name not in node_names:
             raise KeyError(name)
+        host_record = next(node for node in registry.nodes if node.name == name)
+        authority_info = resolve_authority_adapter(
+            manifest,
+            mode=mode,
+            job_kind=job_kind,
+            host_record=host_record,
+        )
+        preview_steps = [
+            f"validate host {name} exists in operator registry",
+            f"resolve downstream authority adapter {authority_info.adapter_id}",
+            f"apply will create authority handoff artifact for {authority_info.owner_repo_id}",
+            f"downstream action is {authority_info.action} through {authority_info.entrypoint}",
+        ]
+        if authority_info.downstream_required_paths:
+            joined_paths = ", ".join(str(path) for path in authority_info.downstream_required_paths)
+            preview_steps.append(f"record downstream execution paths for owner review: {joined_paths}")
         return (
             f"plan remote deployment for host {name}",
-            [
-                f"validate host {name} exists in operator registry",
-                f"would delegate deployment through remote_proxy lifecycle entrypoint for {name}",
-                "executor is not configured, so this job remains dry-run only in current phase",
-            ],
-            [str(host_inventory_path), "repos/remote_proxy/scripts/service.sh"],
-            ["remote deploy apply is intentionally blocked until executor wiring is added"],
+            preview_steps,
+            [str(host_inventory_path), str(authority_info.entrypoint)],
+            list(authority_info.notes),
+            authority_info,
         )
     if job_kind == "decommission_host":
         name = str(payload["name"])
         if name not in node_names:
             raise KeyError(name)
+        host_record = next(node for node in registry.nodes if node.name == name)
+        authority_info = resolve_authority_adapter(
+            manifest,
+            mode=mode,
+            job_kind=job_kind,
+            host_record=host_record,
+        )
+        preview_steps = [
+            f"validate host {name} exists in operator registry",
+            f"resolve downstream authority adapter {authority_info.adapter_id}",
+            f"apply will create authority handoff artifact for {authority_info.owner_repo_id}",
+            f"downstream action is {authority_info.action} through {authority_info.entrypoint}",
+        ]
+        if authority_info.downstream_required_paths:
+            joined_paths = ", ".join(str(path) for path in authority_info.downstream_required_paths)
+            preview_steps.append(f"record downstream execution paths for owner review: {joined_paths}")
         return (
             f"plan remote decommission for host {name}",
-            [
-                f"validate host {name} exists in operator registry",
-                f"would delegate decommission flow through remote_proxy lifecycle entrypoint for {name}",
-                "executor is not configured, so this job remains dry-run only in current phase",
-            ],
-            [str(host_inventory_path), "repos/remote_proxy/scripts/service.sh"],
-            ["remote decommission apply is intentionally blocked until executor wiring is added"],
+            preview_steps,
+            [str(host_inventory_path), str(authority_info.entrypoint)],
+            list(authority_info.notes),
+            authority_info,
         )
     raise ValueError(f"unsupported job kind: {job_kind}")
 
@@ -414,7 +503,7 @@ def _validate_add_host_payload(payload: dict[str, Any]) -> None:
         "change_policy",
         "provider",
     )
-    optional_fields = ("include_in_subscription",)
+    optional_fields = ("include_in_subscription", "deployment_topology", "runtime_service")
     missing = [field for field in required_fields if field not in payload]
     if missing:
         raise ValueError(f"missing host payload field: {missing[0]}")
@@ -432,6 +521,68 @@ def _validate_current_job_policy(jobs: JobsConfig, plan: JobPlan) -> None:
         raise JobPlanIntegrityError("plan apply policy no longer matches current job contract")
     if current_policy.executor != plan.executor:
         raise JobPlanIntegrityError("job executor changed after planning; create a new reviewed plan")
+
+
+def _authority_contract_payload(authority_resolution) -> dict[str, Any]:
+    return {
+        "adapter_id": authority_resolution.adapter_id,
+        "display_name": authority_resolution.display_name,
+        "owner_repo_id": authority_resolution.owner_repo_id,
+        "topology": authority_resolution.topology,
+        "runtime_service": authority_resolution.runtime_service,
+        "handoff_method": authority_resolution.handoff_method,
+        "entrypoint": str(authority_resolution.entrypoint),
+        "service_name": authority_resolution.service_name,
+        "action": authority_resolution.action,
+        "required_paths": [str(path) for path in authority_resolution.required_paths],
+        "downstream_required_paths": [str(path) for path in authority_resolution.downstream_required_paths],
+        "required_env_files": [str(path) for path in authority_resolution.required_env_files],
+        "required_env_keys": list(authority_resolution.required_env_keys),
+        "recommended_command": list(authority_resolution.recommended_command)
+        if authority_resolution.recommended_command is not None
+        else None,
+        "rollback_owner": authority_resolution.rollback_owner,
+        "rollback_hint": authority_resolution.rollback_hint,
+        "notes": list(authority_resolution.notes),
+    }
+
+
+def _validate_current_authority_resolution(
+    *,
+    manifest: PlatformManifest,
+    workspace_root: Path,
+    mode: str,
+    plan: JobPlan,
+):
+    if manifest.host_registry is None:
+        raise JobPlanIntegrityError("host registry source is not configured")
+    registry = load_host_registry(manifest.host_registry, workspace_root)
+    try:
+        host_record = next(node for node in registry.nodes if node.name == str(plan.payload["name"]))
+    except StopIteration as exc:
+        raise JobPlanIntegrityError("host disappeared from registry after planning; create a new reviewed plan") from exc
+    try:
+        authority_resolution = resolve_authority_adapter(
+            manifest,
+            mode=mode,
+            job_kind=plan.job_kind,
+            host_record=host_record,
+        )
+    except AuthorityAdapterError as exc:
+        raise JobPlanIntegrityError(str(exc)) from exc
+    if authority_resolution.adapter_id != plan.authority_adapter_id:
+        raise JobPlanIntegrityError("authority adapter changed after planning; create a new reviewed plan")
+    if authority_resolution.topology != plan.authority_topology:
+        raise JobPlanIntegrityError("host topology changed after planning; create a new reviewed plan")
+    if authority_resolution.action != plan.handoff_action:
+        raise JobPlanIntegrityError("handoff action changed after planning; create a new reviewed plan")
+    if _authority_contract_payload(authority_resolution) != plan.authority_contract:
+        raise JobPlanIntegrityError("authority handoff contract changed after planning; create a new reviewed plan")
+    try:
+        validate_authority_prerequisites(workspace_root=workspace_root, resolution=authority_resolution)
+    except AuthorityAdapterError as exc:
+        raise JobPlanIntegrityError(str(exc)) from exc
+    return host_record, authority_resolution
 
 
 def _write_job_plan(plan: JobPlan) -> None:
@@ -494,6 +645,10 @@ def _job_plan_digest(plan: JobPlan) -> str:
         "preview_steps": list(plan.preview_steps),
         "source_refs": list(plan.source_refs),
         "warnings": list(plan.warnings),
+        "authority_adapter_id": plan.authority_adapter_id,
+        "authority_topology": plan.authority_topology,
+        "handoff_action": plan.handoff_action,
+        "authority_contract": plan.authority_contract,
         "plan_path": str(plan.plan_path),
     }
     serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))

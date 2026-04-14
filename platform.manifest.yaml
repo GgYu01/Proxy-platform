@@ -55,6 +55,7 @@ state:
     required_modes: [operator]
   jobs:
     audit_path: state/jobs/audit
+    handoff_path: state/jobs/handoffs
     required_modes: [operator]
     require_confirmation: true
     kinds:
@@ -65,11 +66,11 @@ state:
         allow_apply: true
         executor: inventory_only
       - id: deploy_host
-        allow_apply: false
-        executor: not_configured
+        allow_apply: true
+        executor: authority_handoff
       - id: decommission_host
-        allow_apply: false
-        executor: not_configured
+        allow_apply: true
+        executor: authority_handoff
   local_providers:
     - id: local_mcp_pool
       display_name: Local MCP pool
@@ -86,6 +87,81 @@ state:
       request_timeout_seconds: 45
       startup_max_attempts: 2
       request_max_attempts: 2
+
+authority_adapters:
+  - id: remote_proxy_cliproxy_plus_standalone
+    display_name: remote_proxy cliproxy-plus standalone handoff
+    owner_repo_id: remote_proxy
+    required_modes: [operator]
+    job_kinds: [deploy_host]
+    topology: standalone_vps
+    runtime_service: cliproxy-plus
+    handoff_method: service_script
+    entrypoint: repos/remote_proxy/scripts/service.sh
+    service_name: cliproxy-plus
+    actions:
+      deploy_host: install
+    required_paths:
+      - repos/remote_proxy
+    required_env_files:
+      - repos/remote_proxy/config/cliproxy-plus.env
+    required_env_keys:
+      - CLIPROXY_IMAGE
+      - CLIPROXY_PORT
+      - CLIPROXY_MEMORY_LIMIT
+      - CLIPROXY_MANAGEMENT_KEY
+      - CLIPROXY_MANAGEMENT_ALLOW_REMOTE
+      - CLIPROXY_API_KEY
+      - CLIPROXY_USAGE_STATISTICS_ENABLED
+    rollback_owner: remote_proxy
+    rollback_hint: Review remote_proxy install/update path before rollback.
+    notes:
+      - proxy-platform only creates a reviewed handoff artifact
+      - actual host mutation remains in remote_proxy on the target host
+  - id: remote_proxy_cliproxy_plus_standalone_decommission
+    display_name: remote_proxy cliproxy-plus standalone decommission handoff
+    owner_repo_id: remote_proxy
+    required_modes: [operator]
+    job_kinds: [decommission_host]
+    topology: standalone_vps
+    runtime_service: cliproxy-plus
+    handoff_method: runbook_only
+    entrypoint: repos/remote_proxy/docs/deploy/cliproxy-plus-standalone-vps.md
+    actions:
+      decommission_host: manual_service_removal
+    required_paths:
+      - repos/remote_proxy
+    required_env_files:
+      - repos/remote_proxy/config/cliproxy-plus.env
+    required_env_keys:
+      - CLIPROXY_MANAGEMENT_KEY
+    rollback_owner: remote_proxy
+    rollback_hint: Re-run reviewed install after remote cleanup if rollback is needed.
+    notes:
+      - remote_proxy does not expose a shared decommission command yet
+  - id: remote_proxy_cliproxy_plus_infra_core_sidecar
+    display_name: remote_proxy infra-core sidecar handoff
+    owner_repo_id: remote_proxy
+    required_modes: [operator]
+    job_kinds: [deploy_host, decommission_host]
+    topology: infra_core_sidecar
+    runtime_service: cliproxy-plus
+    handoff_method: runbook_only
+    entrypoint: repos/remote_proxy/docs/deploy/infra-core-ubuntu-online.md
+    actions:
+      deploy_host: review_sidecar_deploy
+      decommission_host: review_sidecar_decommission
+    required_paths:
+      - repos/remote_proxy
+    downstream_required_paths:
+      - /mnt/hdo/infra-core
+    required_env_files: []
+    required_env_keys: []
+    rollback_owner: infra_core
+    rollback_hint: Use infra-core compose rollback after owner review.
+    notes:
+      - do not run remote_proxy install.sh inside /mnt/hdo/infra-core
+      - actual compose lifecycle remains owned by infra-core
 
 state_sources:
   - id: host_registry

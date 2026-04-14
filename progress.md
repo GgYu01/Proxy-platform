@@ -116,3 +116,58 @@
   - 本地真实进程 smoke：
     - `.venv_fix/bin/python -m proxy_platform web --mode operator --host 127.0.0.1 --port 8765`
     - `curl -fsS http://127.0.0.1:8765/ | rg -n "主机登记作业|明确确认后 apply|include_in_subscription"` 命中预期页面元素
+
+## 2026-04-14
+
+- 根据最终 reviewer 结果，继续补第三阶段收口缺口，而不是直接以“75 passed”结束：
+  - 修复 authority handoff 计划只锁定 adapter/topology/action、没有锁定完整 downstream contract 的问题
+  - 新增 apply 前 downstream prerequisite 校验，避免缺 repo/env/runbook 仍然被记成 `applied`
+  - 把缺少 `deployment_topology` / `runtime_service` 的旧主机记录收紧为 `unknown`，不再默认落进 `standalone_vps + cliproxy-plus`
+- 代码侧新增/补强的验证方向：
+  - `tests/test_jobs.py` 新增 contract drift、required files 缺失、缺 authority classification 三类失败测试
+  - `tests/test_cli.py` 新增 authority prerequisite 缺失时的命令行报错覆盖，并把 plan 输出补到 handoff surface 关键信息
+  - `tests/test_web_app.py` 新增 authority prerequisite 缺失时的 API 409 覆盖
+- 本轮 fresh verification：
+  - `.venv/bin/python -m pytest tests/test_jobs.py -q` -> `14 passed`
+  - `.venv/bin/python -m pytest tests/test_cli.py -q` -> `23 passed`
+  - `.venv/bin/python -m pytest tests/test_web_app.py -q` -> `8 passed`
+  - `.venv/bin/python -m pytest -q` -> `80 passed`
+  - `.venv/bin/python -m proxy_platform manifest validate --manifest platform.manifest.yaml` -> `manifest: ok (proxy-platform 0.1.0)`
+  - 本地真实进程 smoke：
+    - `.venv/bin/python -m proxy_platform web --mode operator --host 127.0.0.1 --port 8765`
+    - `curl -fsS http://127.0.0.1:8765/ | rg -n "远端移交单主机名|authority handoff|明确确认后 apply|topology"` 命中预期页面元素
+    - `curl -fsS http://127.0.0.1:8765/api/jobs` -> `{"jobs":[]}`
+
+## 2026-04-14
+
+- 网络中断恢复后继续做最终收口，没有再改业务实现，先修最后一个 CLI 测试夹具错误。
+- 根因不是 authority handoff 逻辑，而是 `tests/test_cli.py` 中 deploy/decommission 两段测试 manifest 被误改，导致 job `kinds` 与 `authority_adapters[*].job_kinds` 不一致。
+- 已把 deploy 测试恢复为 `deploy_host` authority handoff，decommission 测试恢复为 `decommission_host` authority handoff，各自只验证对应的下游移交流程。
+- 本轮 fresh verification：
+  - `.venv/bin/python -m pytest tests/test_cli.py -q` -> `24 passed`
+  - `.venv/bin/python -m pytest -q` -> `84 passed`
+  - `.venv/bin/python -m proxy_platform manifest validate --manifest platform.manifest.yaml` -> `manifest: ok (proxy-platform 0.1.0)`
+  - 本地真实进程 smoke：
+    - `.venv/bin/python -m proxy_platform web --mode operator --host 127.0.0.1 --port 8765`
+    - `curl -fsS http://127.0.0.1:8765/ | rg -n "远端移交单主机名|authority handoff|明确确认后 apply|topology"` 命中预期页面元素
+    - `curl -fsS http://127.0.0.1:8765/api/jobs` -> `{"jobs":[]}`
+
+## 2026-04-14
+
+- 根据最终 reviewer 追加的最后两条问题继续做第四轮收口，而不是停在“84 passed”上：
+  - 把 authority adapter 的前置条件拆成“本地 review prerequisite”和“downstream execution prerequisite”，避免 `infra_core_sidecar` 把 `/mnt/hdo/infra-core` 误当成本地 apply 阻塞项。
+  - 修复 operator Web 在 apply 成功后立刻整页刷新、把最新移交单结果冲掉的问题，改成保留结果并局部刷新审计列表。
+- 代码与文档同步补强：
+  - manifest / authority handoff / jobs contract 新增 `downstream_required_paths`
+  - `remote_proxy_cliproxy_plus_infra_core_sidecar` 现在只要求本地能审阅 `remote_proxy` runbook，并把 `/mnt/hdo/infra-core` 记录为真正执行方需要再确认的现场前提
+  - Web 页面新增 `audit-list` 局部刷新逻辑，并对前端插入的审计文本做 HTML 转义，避免把 UX 修复引成注入面
+  - README、runbook、ADR、review checklist 已对齐新的合同口径
+- 本轮 fresh verification：
+  - `.venv/bin/python -m pytest tests/test_manifest.py tests/test_jobs.py tests/test_web_app.py -q` -> `42 passed`
+  - `.venv/bin/python -m pytest tests/test_cli.py -q` -> `24 passed`
+  - `.venv/bin/python -m pytest -q` -> `85 passed`
+  - `.venv/bin/python -m proxy_platform manifest validate --manifest platform.manifest.yaml` -> `manifest: ok (proxy-platform 0.1.0)`
+  - 本地真实进程 smoke：
+    - `.venv/bin/python -m proxy_platform web --mode operator --host 127.0.0.1 --port 8765`
+    - `curl -fsS http://127.0.0.1:8765/ | rg -n "远端移交单主机名|authority handoff|明确确认后 apply|topology|audit-list|refreshAudits|window.location.reload"` 命中 `audit-list` / `refreshAudits`，且不再出现 `window.location.reload`
+    - `curl -fsS http://127.0.0.1:8765/api/jobs` -> `{"jobs":[]}`

@@ -2,6 +2,8 @@
 
 统一入口薄平台壳仓库。
 
+一句话说清：`proxy-platform` 现在已经能把远端部署类动作收敛成正式的“移交单”，但它仍然不是直接下发 SSH 的第二控制面，也还没有正式上线的公网 Web 域名。
+
 它负责：
 
 - 统一 CLI / 未来 Web 工作台入口
@@ -111,11 +113,29 @@ python -m proxy_platform jobs audit-list --mode operator
 当前 mutation job 边界是：
 
 - `add_host` / `remove_host`
-  允许 `apply`，但 executor 只到 `inventory_only`，也就是只改登记册文件并写审计。
+  允许 `apply`，executor 是 `inventory_only`，也就是只改登记册文件并写审计。
 - `deploy_host` / `decommission_host`
-  只允许 dry-run，不直接 SSH，不直接替代 `remote_proxy` 生命周期入口。
+  现在也允许 `apply`，但 executor 是 `authority_handoff`。
+  在这个项目里，这里的 `apply` 不等于“已经去远端执行”，而是“生成一份正式移交单，明确告诉下游 authority 仓库或宿主机 owner 下一步该走哪条入口”。
 
-当前 plan 文件只接受位于 `state/jobs/plans/` 这块受管目录下的已审计划，`apply` 时还会校验计划摘要和 `planned` 审计记录是否一致，避免“先审了一个计划，执行时却换了另一个内容”。
+当前 authority handoff 已经固化了三类下游路径：
+
+- `remote_proxy_cliproxy_plus_standalone`
+  适用于 `standalone_vps`，会把 `deploy_host` 移交到 `repos/remote_proxy/scripts/service.sh cliproxy-plus install` 这条生命周期入口。
+- `remote_proxy_cliproxy_plus_standalone_decommission`
+  适用于 `standalone_vps`，但因为下游还没有统一的 decommission 脚本，所以当前只生成 runbook 型移交单。
+- `remote_proxy_cliproxy_plus_infra_core_sidecar`
+  适用于 `infra_core_sidecar`。本地 `apply` 只要求能审阅 `repos/remote_proxy/docs/deploy/infra-core-ubuntu-online.md` 这条移交面；真正执行前必须由 downstream owner 再确认 `/mnt/hdo/infra-core` 这类执行现场前提，而不是把它误当成本地 apply 阻塞项。
+
+当前 plan 文件只接受位于 `state/jobs/plans/` 这块受管目录下的已审计划。`apply` 时还会校验：
+
+- 计划摘要没有被替换
+- 对应 `planned` 审计还在
+- 当前 manifest 仍允许执行这类 job
+- 当前 executor 和 authority adapter 没有漂移
+- 同一 `job_id` 没有已经执行过的 `applied` 审计
+
+这样可以避免“先审了一个计划，执行时换了内容”，也可以避免“旧计划越过新边界”。
 
 当前模式边界：
 
@@ -134,9 +154,11 @@ python -m proxy_platform jobs audit-list --mode operator
 - `docs/adr/ADR-0008-platform-state-model.md`
 - `docs/adr/ADR-0009-repository-ownership-matrix.md`
 - `docs/adr/ADR-0010-mutation-job-flow-boundary.md`
+- `docs/adr/ADR-0011-authority-handoff-and-operator-deployment.md`
 - `docs/repo-boundaries.md`
 - `docs/runbooks/operator-web-console.md`
 - `docs/runbooks/mutation-jobs.md`
+- `docs/runbooks/authority-handoff.md`
 - `docs/review-checklists/mutation-job-flow.md`
 
 ## 推荐工作区布局
@@ -202,8 +224,18 @@ operator 只读与 mutation 入口示例：
 .venv/bin/python -m proxy_platform hosts list --mode operator
 .venv/bin/python -m proxy_platform subscriptions list --mode operator
 .venv/bin/python -m proxy_platform jobs plan-deploy-host --mode operator --host-name lisahost
+.venv/bin/python -m proxy_platform jobs apply --mode operator --plan-file ./state/jobs/plans/<deploy-job>.json --confirm
 .venv/bin/python -m proxy_platform jobs audit-list --mode operator
 ```
+
+这条 `apply` 命令当前只会在通过最终校验后生成 authority handoff 移交单，落到 `state/jobs/handoffs/`，不会直接 SSH 到远端宿主机执行。
+
+这里的最终校验至少包括三类内容：
+
+- 当前 authority contract 没有在 planning 之后发生漂移
+- 下游 entrypoint 仍然存在
+- 本地 review prerequisite，也就是 `required_paths` / `required_env_files`，仍然满足
+- 如果 handoff 里带了 `downstream_required_paths`，这些会被写进移交单并交给真正执行方复核，而不是由平台壳在本地代验
 
 ## Host Toolchain Profiles
 
@@ -229,7 +261,19 @@ operator 只读与 mutation 入口示例：
 
 这让平台壳可以先回答“当前主机是否可用、若不可用缺什么、若默认 python 不满足时有没有稳定候选”，但仍然把真正的安装/切换动作留在下游仓库。
 
-## CLIProxyAPIPlus Worker 升级边界
+## 当前 Web 上线状态
+
+当前已经完成的是“本地 operator 控制台”，不是“线上正式站点”。
+
+- 已完成：本地 Web 控制台
+- 已完成：页面内新增/删除主机计划入口
+- 已完成：deploy/decommission authority handoff 入口
+- 已完成：计划、审计、移交单都落到受管目录
+- 未完成：远端正式部署
+- 未完成：公网域名与认证入口
+- 未完成：真正的远端执行器
+
+所以如果你现在问“线上应该访问哪个域名”，当前答案仍然是：没有。当前只支持本地启动后访问 `http://127.0.0.1:8765/`。
 
 当前 `CLIProxyAPIPlus` worker 的权责边界如下：
 
@@ -246,7 +290,7 @@ operator 只读与 mutation 入口示例：
    - `./scripts/service.sh cliproxy-plus update`
    - `./scripts/service.sh cliproxy-plus switch-version <image>`
 
-当前 `proxy-platform jobs plan-deploy-host` / `jobs plan-decommission-host` 的作用，是把这类操作先固定成平台可审阅的 dry-run plan 和 audit 入口，不替代上面的 authority path。
+当前 `proxy-platform jobs plan-deploy-host` / `jobs plan-decommission-host` 的作用，是把这类操作先固定成平台可审阅的 plan / audit / authority handoff 入口，不替代上面的 authority path。
 
 当前 Lisahost worker 的真实运行形态是 `systemd + podman`，不是 `docker compose`。OAuth / auth 文件、`config.yaml`、日志目录通过 bind mount 保存在宿主机 `state/cliproxy-plus/` 下；usage 统计则需要依赖 `remote_proxy` 生命周期脚本的导出/导入保护，而不是把 `usage/` 目录误认为实时数据库。
 
@@ -256,5 +300,5 @@ operator 只读与 mutation 入口示例：
 - submodule pinning + manifest semantics
 - platform shell only
 - expected state + observed state + projection
-- dry-run before write
+- dry-run or authority handoff before remote write
 - ADR before architecture drift

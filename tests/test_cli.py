@@ -11,6 +11,28 @@ from proxy_platform.toolchain import PythonDiagnosis
 from proxy_platform.toolchain import ToolchainDiagnosis
 
 
+def _write_remote_proxy_authority_surface(tmp_path: Path) -> None:
+    remote_proxy_root = tmp_path / "repos" / "remote_proxy"
+    (remote_proxy_root / "scripts").mkdir(parents=True, exist_ok=True)
+    (remote_proxy_root / "config").mkdir(parents=True, exist_ok=True)
+    (remote_proxy_root / "docs" / "deploy").mkdir(parents=True, exist_ok=True)
+    (remote_proxy_root / "scripts" / "service.sh").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    (remote_proxy_root / "config" / "cliproxy-plus.env").write_text(
+        "CLIPROXY_IMAGE=test\n"
+        "CLIPROXY_PORT=10000\n"
+        "CLIPROXY_MEMORY_LIMIT=512m\n"
+        "CLIPROXY_MANAGEMENT_KEY=test-management\n"
+        "CLIPROXY_MANAGEMENT_ALLOW_REMOTE=true\n"
+        "CLIPROXY_API_KEY=test-api\n"
+        "CLIPROXY_USAGE_STATISTICS_ENABLED=true\n",
+        encoding="utf-8",
+    )
+    (remote_proxy_root / "docs" / "deploy" / "cliproxy-plus-standalone-vps.md").write_text(
+        "# standalone runbook\n",
+        encoding="utf-8",
+    )
+
+
 def test_manifest_validate_command_prints_ok() -> None:
     stdout = StringIO()
     exit_code = run_cli(
@@ -261,6 +283,7 @@ hosts:
 """,
         encoding="utf-8",
     )
+    _write_remote_proxy_authority_surface(tmp_path)
     manifest_path = tmp_path / "platform.manifest.yaml"
     manifest_path.write_text(
         """
@@ -269,7 +292,15 @@ platform:
   version: 0.1.0
   default_mode: public
   supported_modes: [public, operator]
-repos: []
+repos:
+  - id: remote_proxy
+    display_name: remote_proxy
+    role: public_runtime_baseline
+    required_modes: [operator]
+    optional: false
+    visibility: public
+    default_url: https://example.com/remote_proxy.git
+    default_path: repos/remote_proxy
 state:
   host_registry:
     inventory_path: operator/nodes.yaml
@@ -340,6 +371,7 @@ update_interval_hours: 12
 """,
         encoding="utf-8",
     )
+    _write_remote_proxy_authority_surface(tmp_path)
     manifest_path = tmp_path / "platform.manifest.yaml"
     manifest_path.write_text(
         """
@@ -620,7 +652,15 @@ platform:
   version: 0.1.0
   default_mode: operator
   supported_modes: [public, operator]
-repos: []
+repos:
+  - id: remote_proxy
+    display_name: remote_proxy
+    role: public_runtime_baseline
+    required_modes: [operator]
+    optional: false
+    visibility: public
+    default_url: https://example.com/remote_proxy.git
+    default_path: repos/remote_proxy
 state:
   host_registry:
     inventory_path: operator/nodes.yaml
@@ -715,9 +755,10 @@ commands: {}
     assert "status=applied" in output
 
 
-def test_jobs_apply_rejects_dry_run_only_deploy_job(tmp_path: Path) -> None:
+def test_jobs_apply_creates_authority_handoff_for_deploy_job(tmp_path: Path) -> None:
     operator_dir = tmp_path / "operator"
     operator_dir.mkdir(parents=True)
+    _write_remote_proxy_authority_surface(tmp_path)
     (operator_dir / "nodes.yaml").write_text(
         """
 nodes:
@@ -727,9 +768,12 @@ nodes:
     base_port: 10000
     subscription_alias: GG-Lisa-Stable
     enabled: true
+    include_in_subscription: true
     infra_core_candidate: true
     change_policy: frozen
     provider: Lisahost
+    deployment_topology: standalone_vps
+    runtime_service: cliproxy-plus
 """,
         encoding="utf-8",
     )
@@ -751,7 +795,15 @@ platform:
   version: 0.1.0
   default_mode: operator
   supported_modes: [public, operator]
-repos: []
+repos:
+  - id: remote_proxy
+    display_name: remote_proxy
+    role: public_runtime_baseline
+    required_modes: [operator]
+    optional: false
+    visibility: public
+    default_url: https://example.com/remote_proxy.git
+    default_path: repos/remote_proxy
 state:
   host_registry:
     inventory_path: operator/nodes.yaml
@@ -759,6 +811,7 @@ state:
     required_modes: [operator]
   jobs:
     audit_path: state/jobs/audit
+    handoff_path: state/jobs/handoffs
     required_modes: [operator]
     require_confirmation: true
     kinds:
@@ -769,11 +822,61 @@ state:
         allow_apply: true
         executor: inventory_only
       - id: deploy_host
-        allow_apply: false
-        executor: not_configured
+        allow_apply: true
+        executor: authority_handoff
       - id: decommission_host
-        allow_apply: false
-        executor: not_configured
+        allow_apply: true
+        executor: authority_handoff
+authority_adapters:
+  - id: remote_proxy_cliproxy_plus_standalone
+    display_name: remote_proxy cliproxy-plus standalone handoff
+    owner_repo_id: remote_proxy
+    required_modes: [operator]
+    job_kinds: [deploy_host]
+    topology: standalone_vps
+    runtime_service: cliproxy-plus
+    handoff_method: service_script
+    entrypoint: repos/remote_proxy/scripts/service.sh
+    service_name: cliproxy-plus
+    actions:
+      deploy_host: install
+    required_paths:
+      - repos/remote_proxy
+    required_env_files:
+      - repos/remote_proxy/config/cliproxy-plus.env
+    required_env_keys:
+      - CLIPROXY_IMAGE
+      - CLIPROXY_PORT
+      - CLIPROXY_MEMORY_LIMIT
+      - CLIPROXY_MANAGEMENT_KEY
+      - CLIPROXY_MANAGEMENT_ALLOW_REMOTE
+      - CLIPROXY_API_KEY
+      - CLIPROXY_USAGE_STATISTICS_ENABLED
+    rollback_owner: remote_proxy
+    rollback_hint: Review remote_proxy install/update path before rollback.
+    notes:
+      - proxy-platform only creates a reviewed handoff artifact
+  - id: remote_proxy_cliproxy_plus_standalone_decommission
+    display_name: remote_proxy cliproxy-plus standalone decommission handoff
+    owner_repo_id: remote_proxy
+    required_modes: [operator]
+    job_kinds: [decommission_host]
+    topology: standalone_vps
+    runtime_service: cliproxy-plus
+    handoff_method: runbook_only
+    entrypoint: repos/remote_proxy/docs/deploy/cliproxy-plus-standalone-vps.md
+    actions:
+      decommission_host: manual_service_removal
+    required_paths:
+      - repos/remote_proxy
+    required_env_files:
+      - repos/remote_proxy/config/cliproxy-plus.env
+    required_env_keys:
+      - CLIPROXY_MANAGEMENT_KEY
+    rollback_owner: remote_proxy
+    rollback_hint: Re-run reviewed install after remote cleanup if rollback is needed.
+    notes:
+      - remote_proxy does not expose a shared decommission command yet
 commands: {}
 """,
         encoding="utf-8",
@@ -785,6 +888,153 @@ commands: {}
         [
             "jobs",
             "plan-deploy-host",
+            "--manifest",
+            str(manifest_path),
+            "--workspace-root",
+            str(tmp_path),
+            "--mode",
+            "operator",
+            "--host-name",
+            "lisahost",
+            "--output",
+            str(plan_path),
+        ],
+        stdout=stdout,
+    )
+    assert exit_code == 0
+    assert plan_path.exists()
+    plan_output = stdout.getvalue()
+    assert "handoff: owner=remote_proxy method=service_script" in plan_output
+
+    stdout = StringIO()
+    stderr = StringIO()
+    exit_code = run_cli(
+        [
+            "jobs",
+            "apply",
+            "--manifest",
+            str(manifest_path),
+            "--workspace-root",
+            str(tmp_path),
+            "--mode",
+            "operator",
+            "--plan-file",
+            str(plan_path),
+            "--confirm",
+        ],
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    output = stdout.getvalue()
+    assert exit_code == 0
+    assert "job applied:" in output
+    assert "executor=authority_handoff" in output
+    assert "handoff_path=" in output
+    assert "remote_proxy_cliproxy_plus_standalone" in output
+    assert stderr.getvalue() == ""
+
+
+def test_jobs_apply_creates_authority_handoff_for_decommission_job(tmp_path: Path) -> None:
+    operator_dir = tmp_path / "operator"
+    operator_dir.mkdir(parents=True)
+    _write_remote_proxy_authority_surface(tmp_path)
+    (operator_dir / "nodes.yaml").write_text(
+        """
+nodes:
+  - name: lisahost
+    host: 38.34.8.59
+    ssh_port: 27823
+    base_port: 10000
+    subscription_alias: GG-Lisa-Stable
+    enabled: true
+    include_in_subscription: true
+    infra_core_candidate: true
+    change_policy: frozen
+    provider: Lisahost
+    deployment_topology: standalone_vps
+    runtime_service: cliproxy-plus
+""",
+        encoding="utf-8",
+    )
+    (operator_dir / "subscriptions.yaml").write_text(
+        """
+profile_name: GG Proxy Nodes
+subscription_base_url: https://example.com/subscriptions
+hiddify_fragment_name: GG Proxy Nodes
+remote_profile_name: GG Proxy Nodes Remote
+update_interval_hours: 12
+""",
+        encoding="utf-8",
+    )
+    manifest_path = tmp_path / "platform.manifest.yaml"
+    manifest_path.write_text(
+        """
+platform:
+  name: proxy-platform
+  version: 0.1.0
+  default_mode: operator
+  supported_modes: [public, operator]
+repos:
+  - id: remote_proxy
+    display_name: remote_proxy
+    role: public_runtime_baseline
+    required_modes: [operator]
+    optional: false
+    visibility: public
+    default_url: https://example.com/remote_proxy.git
+    default_path: repos/remote_proxy
+state:
+  host_registry:
+    inventory_path: operator/nodes.yaml
+    subscriptions_path: operator/subscriptions.yaml
+    required_modes: [operator]
+  jobs:
+    audit_path: state/jobs/audit
+    handoff_path: state/jobs/handoffs
+    required_modes: [operator]
+    require_confirmation: true
+    kinds:
+      - id: add_host
+        allow_apply: true
+        executor: inventory_only
+      - id: remove_host
+        allow_apply: true
+        executor: inventory_only
+      - id: decommission_host
+        allow_apply: true
+        executor: authority_handoff
+authority_adapters:
+  - id: remote_proxy_cliproxy_plus_standalone_decommission
+    display_name: remote_proxy cliproxy-plus standalone decommission handoff
+    owner_repo_id: remote_proxy
+    required_modes: [operator]
+    job_kinds: [decommission_host]
+    topology: standalone_vps
+    runtime_service: cliproxy-plus
+    handoff_method: runbook_only
+    entrypoint: repos/remote_proxy/docs/deploy/cliproxy-plus-standalone-vps.md
+    actions:
+      decommission_host: manual_service_removal
+    required_paths:
+      - repos/remote_proxy
+    required_env_files:
+      - repos/remote_proxy/config/cliproxy-plus.env
+    required_env_keys:
+      - CLIPROXY_MANAGEMENT_KEY
+    rollback_owner: remote_proxy
+    rollback_hint: Re-run reviewed install after remote cleanup if rollback is needed.
+commands: {}
+""",
+        encoding="utf-8",
+    )
+    plan_path = tmp_path / "state" / "jobs" / "plans" / "decommission-host.json"
+
+    stdout = StringIO()
+    exit_code = run_cli(
+        [
+            "jobs",
+            "plan-decommission-host",
             "--manifest",
             str(manifest_path),
             "--workspace-root",
@@ -821,8 +1071,152 @@ commands: {}
         stderr=stderr,
     )
 
+    output = stdout.getvalue()
+    assert exit_code == 0
+    assert "job applied:" in output
+    assert "executor=authority_handoff" in output
+    assert "remote_proxy_cliproxy_plus_standalone_decommission" in output
+    assert stderr.getvalue() == ""
+
+
+
+def test_jobs_apply_rejects_authority_handoff_when_required_files_are_missing(tmp_path: Path) -> None:
+    operator_dir = tmp_path / "operator"
+    operator_dir.mkdir(parents=True)
+    (operator_dir / "nodes.yaml").write_text(
+        """
+nodes:
+  - name: lisahost
+    host: 38.34.8.59
+    ssh_port: 27823
+    base_port: 10000
+    subscription_alias: GG-Lisa-Stable
+    enabled: true
+    include_in_subscription: true
+    infra_core_candidate: true
+    change_policy: frozen
+    provider: Lisahost
+    deployment_topology: standalone_vps
+    runtime_service: cliproxy-plus
+""",
+        encoding="utf-8",
+    )
+    (operator_dir / "subscriptions.yaml").write_text(
+        """
+profile_name: GG Proxy Nodes
+subscription_base_url: https://example.com/subscriptions
+hiddify_fragment_name: GG Proxy Nodes
+remote_profile_name: GG Proxy Nodes Remote
+update_interval_hours: 12
+""",
+        encoding="utf-8",
+    )
+    _write_remote_proxy_authority_surface(tmp_path)
+    manifest_path = tmp_path / "platform.manifest.yaml"
+    manifest_path.write_text(
+        """
+platform:
+  name: proxy-platform
+  version: 0.1.0
+  default_mode: operator
+  supported_modes: [public, operator]
+repos:
+  - id: remote_proxy
+    display_name: remote_proxy
+    role: public_runtime_baseline
+    required_modes: [operator]
+    optional: false
+    visibility: public
+    default_url: https://example.com/remote_proxy.git
+    default_path: repos/remote_proxy
+state:
+  host_registry:
+    inventory_path: operator/nodes.yaml
+    subscriptions_path: operator/subscriptions.yaml
+    required_modes: [operator]
+  jobs:
+    audit_path: state/jobs/audit
+    handoff_path: state/jobs/handoffs
+    required_modes: [operator]
+    require_confirmation: true
+    kinds:
+      - id: add_host
+        allow_apply: true
+        executor: inventory_only
+      - id: remove_host
+        allow_apply: true
+        executor: inventory_only
+      - id: deploy_host
+        allow_apply: true
+        executor: authority_handoff
+authority_adapters:
+  - id: remote_proxy_cliproxy_plus_standalone
+    display_name: remote_proxy cliproxy-plus standalone handoff
+    owner_repo_id: remote_proxy
+    required_modes: [operator]
+    job_kinds: [deploy_host]
+    topology: standalone_vps
+    runtime_service: cliproxy-plus
+    handoff_method: service_script
+    entrypoint: repos/remote_proxy/scripts/service.sh
+    service_name: cliproxy-plus
+    actions:
+      deploy_host: install
+    required_paths:
+      - repos/remote_proxy
+    required_env_files:
+      - repos/remote_proxy/config/cliproxy-plus.env
+    required_env_keys:
+      - CLIPROXY_IMAGE
+    rollback_owner: remote_proxy
+    rollback_hint: Review remote_proxy install/update path before rollback.
+commands: {}
+""",
+        encoding="utf-8",
+    )
+    plan_path = tmp_path / "state" / "jobs" / "plans" / "deploy-host.json"
+    stdout = StringIO()
+    run_cli(
+        [
+            "jobs",
+            "plan-deploy-host",
+            "--manifest",
+            str(manifest_path),
+            "--workspace-root",
+            str(tmp_path),
+            "--mode",
+            "operator",
+            "--host-name",
+            "lisahost",
+            "--output",
+            str(plan_path),
+        ],
+        stdout=stdout,
+    )
+    (tmp_path / "repos" / "remote_proxy" / "config" / "cliproxy-plus.env").unlink()
+
+    stdout = StringIO()
+    stderr = StringIO()
+    exit_code = run_cli(
+        [
+            "jobs",
+            "apply",
+            "--manifest",
+            str(manifest_path),
+            "--workspace-root",
+            str(tmp_path),
+            "--mode",
+            "operator",
+            "--plan-file",
+            str(plan_path),
+            "--confirm",
+        ],
+        stdout=stdout,
+        stderr=stderr,
+    )
+
     assert exit_code == 2
-    assert "dry-run only in current phase" in stderr.getvalue()
+    assert "authority prerequisites missing" in stderr.getvalue()
 
 
 def test_jobs_apply_rejects_plan_file_outside_managed_directory(tmp_path: Path) -> None:

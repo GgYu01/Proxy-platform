@@ -2,7 +2,7 @@
 
 ## 当前决定
 
-- 新仓库位置：`/workspaces/proxy_own/proxy-platform`
+- 当前权威仓库位置：`/workspaces/proxy-platform`
 - 先做 CLI-first 的薄平台壳
 - `git submodule + platform.manifest.yaml` 共同表达依赖与语义
 - 本阶段用 doctor / init / sync / toolchain profiles 建立最小闭环
@@ -22,33 +22,33 @@
 
 ## 暂不实现
 
-- 真实 Web 工作台
+- 正式公网 Web 工作台
 - 真实 job runner
-- 真实远端 apply/publish 写操作
+- 平台侧真实远端 apply/publish 写操作
 - 自动安装或切换系统级运行时
 - 自动远端 SSH 检查与修复
 
 ## 2026-04-14 新任务发现
 
-- 当前仓库在项目语言里更像“工作区仓库盘点结果 + 宿主机依赖体检入口”，不是“远端代理编排与动态订阅平台”。
-- `apps/web-console/README.md` 仍明确是占位目录，说明 Web 管理台尚未开始正式实现。
+- 在任务起点盘点时，这个仓库在项目语言里更像“工作区仓库盘点结果 + 宿主机依赖体检入口”，还不是完整的“远端代理编排与动态订阅平台”。
+- 在任务起点盘点时，`apps/web-console/README.md` 仍明确是占位目录，这也是为什么当时先从最小 Web 控制台而不是完整前端落手。
 - `src/proxy_platform/cli.py`、`src/proxy_platform/workspace.py`、`src/proxy_platform/toolchain.py` 目前都没有统一的 timeout/retry policy 抽象。
 - `workspace.py` 和 `toolchain.py` 直接用同步 `subprocess.run(..., capture_output=True, text=True)`，没有每类动作独立的超时预算，也没有结构化重试策略。
-- 当前本地 Codex 配置真实路径是 `~/.codex/config.toml`，大多数本地 MCP 的 `startup_timeout_sec` 还是 `120.0`。
+- 当前本地 Codex 配置真实路径是 `~/.codex/config.toml`；本轮复核时，主要 MCP 的 `startup_timeout_sec` 已经收敛到 `15.0`，并保留了手动 rollback 注释。
 - 从现有 `context-engine` 启动日志看，服务本身能在秒级启动；说明当前主要矛盾不是“默认 120 秒不够”，而是缺少更细粒度的启动性能治理和分层 timeout。
 - 按现有 ADR 边界，`proxy-platform` 可以新增 adapter / job schema / manifest / UI，但不应复制 `CliProxy-control-plane` northbound 内核，也不应替代 `remote_proxy` 的宿主机生命周期脚本。
-- 用户这次的核心新需求不是单一代理节点，而是“远端主机登记 -> 部署代理 -> 健康检查 -> 动态订阅 -> Web 可视化管理”的完整闭环；这个闭环当前项目完全不存在。
+- 用户这次的核心新需求不是单一代理节点，而是“远端主机登记 -> 部署代理 -> 健康检查 -> 动态订阅 -> Web 可视化管理”的完整闭环；在任务开始时，这个闭环在项目里还不存在。
 - 设计上的第一关键分歧是：远端主机“自动出现”到底靠平台侧登记，还是靠远端 agent/self-register 反向注册；这会决定平台的数据真相源和故障模式。
 
 ## 2026-04-14 新发现
 
-- 当前 `proxy-platform` 已有的平台壳能力只有三类：
+- 在第一轮盘点时，`proxy-platform` 已有的平台壳能力只有三类：
   - 工作区仓库盘点与同步
   - manifest/.gitmodules 一致性校验
   - 宿主机 toolchain 诊断
-- 当前仓库内没有“远端主机登记册”“健康探针”“订阅视图”“Web 管理台”“远端部署 job schema”的正式模型。
+- 在第一轮盘点时，仓库内还没有“远端主机登记册”“健康探针”“订阅视图”“Web 管理台”“远端部署 job schema”的正式模型。
 - 现有 `doctor toolchain` 只做单机本地只读检查，不含重试预算、超时治理、MCP 启动时序或 provider 级健康状态。
-- 现有 `apps/web-console` 仍是占位目录，仓库明确要求未来 Web 复用下游能力，不应在这里重写控制面业务内核。
+- `apps/web-console` 目录仍不是正式前端源码根；当前已存在最小 Web 控制台实现，但仓库仍要求未来完整前端复用下游能力，不应在这里重写控制面业务内核。
 - 历史代理订阅经验表明，稳定的边界是：
   - `remote_proxy` 保留公开运行基线与客户端文档
   - `Proxy_ops_private` 保留 inventory、secrets、生成物与发布脚本真相源
@@ -91,3 +91,18 @@
   - 不提交到 Git
 - Web runbook 现在补了一个明确的“上线决策门”：
   - 远端正式部署前，必须先补 deployment ADR，明确落地拓扑、发布仓库和认证入口责任归属
+
+## 2026-04-14 第三阶段主体完成后的复核
+
+- `deploy_host` / `decommission_host` 现在已经不是“只能 dry-run”的旧入口，而是“可以 apply 生成 authority handoff 移交单”的正式平台合同。
+- 这意味着当前平台层已经能回答三个关键问题：
+  - 这台主机属于哪种部署拓扑
+  - 这类动作应该移交给哪个下游 owner
+  - 回退 owner 和 rollback hint 是什么
+- 当前仍然没有完成的是“正式公网发布”而不是“平台合同本身”：
+  - 还没有正式公网域名
+  - 还没有最终认证入口
+  - 还没有脱敏后的 public state source
+- 因此，当前正确口径应该是：
+  - 平台合同、移交单、Web 本地控制台已完成当前阶段目标
+  - 远端正式上线仍是后续 deployment 阶段

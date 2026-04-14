@@ -22,6 +22,8 @@ class HostRecord:
     infra_core_candidate: bool
     change_policy: str
     provider: str
+    deployment_topology: str
+    runtime_service: str
 
 
 @dataclass(frozen=True)
@@ -138,4 +140,6 @@ def _host_record_from_mapping(payload: dict[str, Any]) -> HostRecord:
         infra_core_candidate=bool(payload["infra_core_candidate"]),
         change_policy=str(payload["change_policy"]),
         provider=str(payload["provider"]),
+        deployment_topology=str(payload.get("deployment_topology", "unknown")),
+        runtime_service=str(payload.get("runtime_service", "unknown")),
     )

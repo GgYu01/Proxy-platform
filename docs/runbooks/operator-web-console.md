@@ -36,8 +36,8 @@
 - 已完成：inventory-only executor 的本地审计记录
 - 未完成：远端正式部署
 - 未完成：公网域名接入
-- 未完成：受控远端 authority adapter
-- 未完成：远端 deploy/decommission 的真正 apply
+- 已完成：受控远端 authority handoff adapter
+- 未完成：远端 deploy/decommission 的真正宿主机执行器
 
 因此，当前没有“应该访问哪个线上域名”的答案。
 
@@ -112,7 +112,7 @@ http://127.0.0.1:8765/
 
 - 主机新增作业入口
 - 主机移除作业入口
-- deploy / decommission 的 dry-run 入口
+- deploy / decommission 的 authority handoff 入口
 - 最近一次审计事件
 
 这部分回答的是“当前平台允许哪些变更先进入 job contract，以及这些变更有没有留下审计痕迹”。
@@ -125,11 +125,12 @@ http://127.0.0.1:8765/
 - 会写 audit 事件
 - plan 文件会落在 `state/jobs/plans/`
 - 对 `add_host` / `remove_host` 会在确认后修改 inventory 文件
+- 对 `deploy_host` / `decommission_host` 会在确认后生成 authority handoff 移交单
 - 不会自动 SSH 到远端
-- 不会自动部署代理
-- 不会自动摘除远端服务
+- 不会直接部署代理
+- 不会直接摘除远端服务
 
-换句话说，现在它是“受控 job 入口”，不是“远端执行入口”。
+换句话说，现在它是“受控 job + 移交单入口”，不是“远端执行入口”。
 
 另外，页面已经改成显式两步：
 
@@ -177,16 +178,19 @@ http://127.0.0.1:8765/
 
 如果页面没有覆盖你的维护场景，或者你需要一次性批量调整，直接修改这两份文件仍然是当前最稳的方式。
 
-### 计划远端动作
+### 计划并生成远端移交单
 
-当前只允许 dry-run：
+当前远端动作已经可以进入 authority handoff：
 
 ```bash
 .venv/bin/python -m proxy_platform jobs plan-deploy-host --mode operator --host-name lisahost
+.venv/bin/python -m proxy_platform jobs apply --mode operator --plan-file ./state/jobs/plans/<deploy-job>.json --confirm
+
 .venv/bin/python -m proxy_platform jobs plan-decommission-host --mode operator --host-name lisahost
+.venv/bin/python -m proxy_platform jobs apply --mode operator --plan-file ./state/jobs/plans/<decommission-job>.json --confirm
 ```
 
-这两类命令现在会告诉你“如果未来接上 authority adapter，会走哪条下游生命周期入口”，但不会真的远端 apply。
+这里的 `apply` 只会把 reviewed plan 变成 `state/jobs/handoffs/<job>.yaml` 移交单，不会真的远端执行。
 
 ### 当前怎么回退
 
@@ -194,7 +198,9 @@ http://127.0.0.1:8765/
 
 - 如果刚新增错了主机，回退方式是再做一次 `remove_host` job。
 - 如果刚移除了错误主机，回退方式是再做一次 `add_host` job。
-- 远端 deploy/decommission 还没有真正 apply，所以当前不存在自动远端回退。
+- 远端 deploy/decommission 当前只有 authority handoff，没有平台侧自动远端回退。
+- `standalone_vps` 的 rollback owner 仍然是 `remote_proxy`。
+- `infra_core_sidecar` 的 rollback owner 仍然是 `infra_core`。
 
 ### 做完变更后验证
 
@@ -223,8 +229,8 @@ http://127.0.0.1:8765/
 
 1. 明确部署形态
    先决定是单独服务，还是挂到现有控制面前面。
-2. 接上 authority adapter
-   让 deploy/decommission 的 apply 明确委托到 `remote_proxy` 或其他下游真相源，而不是页面直接 SSH。
+2. 接上真正远端执行器
+   当前 authority handoff 只解决“移交给谁”，还没有解决“平台是否真的代执行”。
 3. 明确公开/私有视图分层
    当前页面依赖私有登记册，不能直接公网开放。
 4. 接入正式认证与发布入口
@@ -249,6 +255,8 @@ http://127.0.0.1:8765/
 - [ADR-0008-platform-state-model.md](/workspaces/proxy-platform/docs/adr/ADR-0008-platform-state-model.md)
 - [ADR-0009-repository-ownership-matrix.md](/workspaces/proxy-platform/docs/adr/ADR-0009-repository-ownership-matrix.md)
 - [ADR-0010-mutation-job-flow-boundary.md](/workspaces/proxy-platform/docs/adr/ADR-0010-mutation-job-flow-boundary.md)
+- [ADR-0011-authority-handoff-and-operator-deployment.md](/workspaces/proxy-platform/docs/adr/ADR-0011-authority-handoff-and-operator-deployment.md)
 - [mutation-jobs.md](/workspaces/proxy-platform/docs/runbooks/mutation-jobs.md)
+- [authority-handoff.md](/workspaces/proxy-platform/docs/runbooks/authority-handoff.md)
 - [mutation-job-flow.md](/workspaces/proxy-platform/docs/review-checklists/mutation-job-flow.md)
 - [repo-boundaries.md](/workspaces/proxy-platform/docs/repo-boundaries.md)

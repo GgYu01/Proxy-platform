@@ -88,7 +88,7 @@
 - 观测状态 schema
 - 页面主机视图规则
 - 订阅派生规则
-- 远端 job schema 与 dry-run / 审计规则
+- 远端 job schema、authority handoff / 审计规则
 
 原因：
 

@@ -93,12 +93,112 @@ def test_load_manifest_tracks_job_policy_and_audit_config() -> None:
 
     assert manifest.jobs is not None
     assert manifest.jobs.audit_path == Path("state/jobs/audit")
+    assert manifest.jobs.handoff_path == Path("state/jobs/handoffs")
     assert manifest.jobs.required_modes == ["operator"]
     assert manifest.jobs.require_confirmation is True
     assert manifest.jobs.policy_for("add_host").allow_apply is True
     assert manifest.jobs.policy_for("remove_host").allow_apply is True
-    assert manifest.jobs.policy_for("deploy_host").allow_apply is False
-    assert manifest.jobs.policy_for("deploy_host").executor == "not_configured"
+    assert manifest.jobs.policy_for("deploy_host").allow_apply is True
+    assert manifest.jobs.policy_for("deploy_host").executor == "authority_handoff"
+    assert manifest.jobs.policy_for("decommission_host").executor == "authority_handoff"
+    assert manifest.authority_adapters["remote_proxy_cliproxy_plus_standalone"].entrypoint == Path(
+        "repos/remote_proxy/scripts/service.sh"
+    )
+    assert manifest.authority_adapters["remote_proxy_cliproxy_plus_standalone"].actions["deploy_host"] == "install"
+    assert (
+        manifest.authority_adapters["remote_proxy_cliproxy_plus_standalone_decommission"].handoff_method
+        == "runbook_only"
+    )
+    assert manifest.authority_adapters["remote_proxy_cliproxy_plus_infra_core_sidecar"].required_paths == (
+        Path("repos/remote_proxy"),
+    )
+    assert manifest.authority_adapters["remote_proxy_cliproxy_plus_infra_core_sidecar"].downstream_required_paths == (
+        Path("/mnt/hdo/infra-core"),
+    )
+
+
+def test_load_manifest_rejects_authority_adapter_with_unknown_repo(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "platform.manifest.yaml"
+    manifest_path.write_text(
+        """
+platform:
+  name: proxy-platform
+  version: 0.1.0
+  default_mode: operator
+  supported_modes: [operator]
+repos: []
+state:
+  jobs:
+    audit_path: state/jobs/audit
+    handoff_path: state/jobs/handoffs
+    required_modes: [operator]
+    require_confirmation: true
+    kinds:
+      - id: deploy_host
+        allow_apply: true
+        executor: authority_handoff
+authority_adapters:
+  - id: broken
+    display_name: broken
+    owner_repo_id: remote_proxy
+    required_modes: [operator]
+    job_kinds: [deploy_host]
+    topology: standalone_vps
+    runtime_service: cliproxy-plus
+    handoff_method: service_script
+    entrypoint: repos/remote_proxy/scripts/service.sh
+    service_name: cliproxy-plus
+    actions:
+      deploy_host: install
+    required_paths: [repos/remote_proxy]
+    required_env_files: [repos/remote_proxy/config/cliproxy-plus.env]
+    required_env_keys: [CLIPROXY_IMAGE]
+    rollback_owner: remote_proxy
+    rollback_hint: rollback
+commands: {}
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ManifestError):
+        load_manifest(manifest_path)
+
+
+def test_load_manifest_rejects_authority_handoff_job_without_adapter(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "platform.manifest.yaml"
+    manifest_path.write_text(
+        """
+platform:
+  name: proxy-platform
+  version: 0.1.0
+  default_mode: operator
+  supported_modes: [operator]
+repos:
+  - id: remote_proxy
+    display_name: remote_proxy
+    role: public_runtime_baseline
+    required_modes: [operator]
+    optional: false
+    visibility: public
+    default_url: https://example.com/remote_proxy.git
+    default_path: repos/remote_proxy
+state:
+  jobs:
+    audit_path: state/jobs/audit
+    handoff_path: state/jobs/handoffs
+    required_modes: [operator]
+    require_confirmation: true
+    kinds:
+      - id: deploy_host
+        allow_apply: true
+        executor: authority_handoff
+commands: {}
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ManifestError):
+        load_manifest(manifest_path)
 
 
 def test_load_manifest_rejects_projection_with_unknown_source(tmp_path: Path) -> None:
