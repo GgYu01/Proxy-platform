@@ -102,6 +102,7 @@ python -m proxy_platform subscriptions preview --registry ./registry.yaml --obse
 - `docs/adr/ADR-0008-platform-state-model.md`
 - `docs/adr/ADR-0009-repository-ownership-matrix.md`
 - `docs/repo-boundaries.md`
+- `docs/runbooks/operator-web-console.md`
 
 ## 推荐工作区布局
 
