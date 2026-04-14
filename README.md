@@ -95,6 +95,25 @@ python -m proxy_platform doctor toolchain --profile control_plane_compose
 
 这让平台壳可以先回答“当前主机是否可用、若不可用缺什么、若默认 python 不满足时有没有稳定候选”，但仍然把真正的安装/切换动作留在下游仓库。
 
+## CLIProxyAPIPlus Worker 升级边界
+
+当前 `CLIProxyAPIPlus` worker 的权责边界如下：
+
+- `proxy-platform`
+  负责统一帮助入口、工作区编排、repo 同步、宿主机 toolchain 诊断和平台级文档。
+- `remote_proxy`
+  负责 `cliproxy-plus` 的真实部署基线、版本切换、Podman/systemd 服务生成以及 usage 备份恢复生命周期。
+
+推荐操作顺序：
+
+1. 在本地修改并评审 `remote_proxy` 仓库内的镜像版本、脚本或文档。
+2. 将远端主机上的 `remote_proxy` 工作树同步到该已评审版本。
+3. 在远端主机执行仓库入口命令，而不是手工改 live systemd 文件：
+   - `./scripts/service.sh cliproxy-plus update`
+   - `./scripts/service.sh cliproxy-plus switch-version <image>`
+
+当前 Lisahost worker 的真实运行形态是 `systemd + podman`，不是 `docker compose`。OAuth / auth 文件、`config.yaml`、日志目录通过 bind mount 保存在宿主机 `state/cliproxy-plus/` 下；usage 统计则需要依赖 `remote_proxy` 生命周期脚本的导出/导入保护，而不是把 `usage/` 目录误认为实时数据库。
+
 ## 设计原则
 
 - CLI first，Web later
