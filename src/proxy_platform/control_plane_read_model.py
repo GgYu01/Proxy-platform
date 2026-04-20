@@ -168,12 +168,12 @@ def _normalize_account(item: Mapping[str, Any]) -> dict[str, Any]:
     )
     has_fresh_probe_failure = bool(probe_state.get("has_fresh_failure")) or probe_status == "error"
     quota_summary = (
-        _string_or_none(latest_snapshot.get("summary_value"))
-        or _string_or_none(latest_snapshot.get("normalized_remaining_value"))
+        _string_or_none(latest_snapshot.get("summary_value") if latest_snapshot else None)
+        or _string_or_none(latest_snapshot.get("normalized_remaining_value") if latest_snapshot else None)
         or "无最新配额快照"
     )
-    reset_at = _string_or_none(latest_snapshot.get("normalized_reset_at")) or _string_or_none(
-        latest_snapshot.get("expires_at")
+    reset_at = _string_or_none(latest_snapshot.get("normalized_reset_at") if latest_snapshot else None) or _string_or_none(
+        latest_snapshot.get("expires_at") if latest_snapshot else None
     )
     return {
         "account_id": _string_or_default(item.get("account_id"), ""),
