@@ -19,6 +19,30 @@ def test_operator_module_compose_exposes_healthcheck_gateway_and_direct_port() -
     assert any("proxy-platform-operator.svc.prod.lab.gglohh.top" in label for label in service["labels"])
 
 
+def test_operator_module_compose_passes_control_plane_read_model_inputs() -> None:
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+
+    service = compose["services"]["proxy-platform-operator"]
+    environment = service["environment"]
+
+    assert (
+        environment["PROXY_PLATFORM_CONTROL_PLANE_BASE_URL"]
+        == "${PROXY_PLATFORM_CONTROL_PLANE_BASE_URL:-}"
+    )
+    assert (
+        environment["PROXY_PLATFORM_CONTROL_PLANE_USERNAME"]
+        == "${PROXY_PLATFORM_CONTROL_PLANE_USERNAME:-}"
+    )
+    assert (
+        environment["PROXY_PLATFORM_CONTROL_PLANE_PASSWORD"]
+        == "${PROXY_PLATFORM_CONTROL_PLANE_PASSWORD:-}"
+    )
+    assert (
+        environment["PROXY_PLATFORM_CONTROL_PLANE_TIMEOUT_SECONDS"]
+        == "${PROXY_PLATFORM_CONTROL_PLANE_TIMEOUT_SECONDS:-10}"
+    )
+
+
 def test_operator_module_env_example_declares_runtime_seed_and_auth_inputs() -> None:
     env_example = (ROOT / "deploy" / "infra-core-module" / "module.env.example").read_text(encoding="utf-8")
 

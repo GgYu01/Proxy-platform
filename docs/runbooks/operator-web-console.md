@@ -24,8 +24,7 @@
 - 主入口：`https://proxy-platform-operator.svc.prod.lab.gglohh.top:27111/`
 - 健康检查：`https://proxy-platform-operator.svc.prod.lab.gglohh.top:27111/health`
 - 认证方式：HTTP Basic Auth
-- 用户名：当前默认是 `admin`
-- 密码：当前默认值是 `Aa123456`，如后续调整以远端 `.env` 为准
+- 账号凭据：只以远端模块 `.env` 为准，不在仓库文档中保存实际密码
 
 当前还保留了宿主机直连 fallback：
 

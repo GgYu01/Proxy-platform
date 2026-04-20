@@ -333,9 +333,7 @@ public 快照与 private truth 回写入口示例：
 - 主入口：`https://proxy-platform-operator.svc.prod.lab.gglohh.top:27111/`
 - 健康检查：`https://proxy-platform-operator.svc.prod.lab.gglohh.top:27111/health`
 - 认证方式：HTTP Basic Auth
-- 默认账号名：`admin`
-- 默认密码：`Aa123456`
-- 如后续调整，以远端模块 `.env` 为准
+- 账号凭据：只以远端模块 `.env` 为准，不在仓库文档中保存实际密码
 
 当前运行时布局：
 
@@ -481,7 +479,7 @@ curl -k https://proxy-platform-operator.svc.prod.lab.gglohh.top:27111/health
 ssh -p 52117 gaoyx@112.28.134.53 'cd /mnt/hdo/infra-core && scripts/modulectl.sh logs proxy-platform-operator | tail -n 50'
 ```
 
-如果 `.env` 里缺少 `PROXY_PLATFORM_OPERATOR_BASIC_AUTH_USERNAME` 或 `PROXY_PLATFORM_OPERATOR_BASIC_AUTH_PASSWORD`，或者密码还是示例值，当前版本会直接拒绝启动。这是故意设计的，目的就是防止“配置丢了一半，站点却裸奔上线”。
+如果 `.env` 里缺少 `PROXY_PLATFORM_OPERATOR_BASIC_AUTH_USERNAME` 或 `PROXY_PLATFORM_OPERATOR_BASIC_AUTH_PASSWORD`，或者密码还是占位符值，当前版本会直接拒绝启动。这是故意设计的，目的就是防止“配置丢了一半，站点却裸奔上线”。
 
 人工回退：
 
