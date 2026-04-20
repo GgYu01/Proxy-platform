@@ -4,9 +4,28 @@
 - 是否避免复制 control-plane 业务内核
 - 是否保护 private/public 边界
 - 是否把依赖 private registry 的命令和页面明确限制在 `operator` 模式
+- 是否把 `public` 模式明确收敛为只消费 `state/public/*.json` 脱敏快照
+- public 快照里是否继续排除了 `host`、`ssh_port`、`base_port`、`change_policy` 等 private 维护字段
 - 是否把“主机登记册 / 观测回报 / 订阅派生”三层状态分清楚
 - 如果涉及 mutation，是否已经转入 `job plan / audit / apply` 合同，而不是页面直连写操作
 - 是否把订阅文本和页面展示当成派生结果，而不是原始真相
+- 如果涉及 `.runtime-workspace` -> private truth 回写，是否已经转入 `exports plan-sync-private` / `apply-sync-private` 合同，而不是手工 copy
+- private truth sync 是否保留了 source/target digest 校验和显式确认
+- 如果涉及正式部署，是否把 `/app` 固定发布物、`.runtime-seed`、`.runtime-workspace` 三层运行面分开
+- 是否避免在 redeploy 时覆盖 `.runtime-workspace` 里的运行态主机登记册和审计痕迹
+- redeploy 如果刷新 `nodes.yaml` / `subscriptions.yaml`，是否已经证明远端副本仍然等于上一版 seed，而不是覆盖掉现场新增编辑
+- redeploy 如果没有刷新现场清单，是否能明确说明是“现场已漂移所以保留”，而不是“链路根本没把新登记册带过去”
+- 是否给 operator Web 接上明确认证入口和 `/health`，而不是裸奔上线
+- operator Web 是否仍然保持服务端模板壳，而不是无边界滑向新的独立控制面前端
+- operator Web 是否把页面复杂度收敛在模板、静态资源和轻量脚本，而不是重新堆回单个 `web_app.py` 大字符串
+- 如果展示远端 worker/oauth quota，是否继续只读消费 `cliproxy-control-plane` 权威接口，而不是在 `proxy-platform` 内复制控制面逻辑
+- 如果纳管 `webchat-openai-runtime` 这类浏览器驱动 runtime，是否明确写成“可选 provider runtime”而不是“平台控制面扩编”
+- `webchat-openai-runtime` 的 OpenAI-compatible 协议面、adapter、browser profile、slot 状态是否仍然留在下游仓库，而不是回流到根仓
+- 是否为 `webchat-openai-runtime` 同步补了 manifest、README、ADR、governance、review checklist 和 acceptance 证据
+- 是否把“缺认证直接拒绝启动”做成正式部署约束，而不是缺变量时匿名降级
+- 是否同时拒绝仓库里已知的示例口令，避免第一次部署就带默认密码上线
+- 是否在重发模块时明确保留远端 `.env`，避免把真实口令或域名重置回示例值
+- 是否区分“保留现场清单”和“刷新 authority review surface”，避免 handoff 长期引用旧模板
 - 是否先做 ownership review，再决定改动落在哪个仓库
 - 是否为新命令补了帮助文案和测试
 - 是否把平台级架构变更同步到 ADR

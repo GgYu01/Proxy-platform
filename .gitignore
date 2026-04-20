@@ -10,3 +10,9 @@ context-engine-*.log
 repos/
 archive/
 state/
+.env
+.runtime-seed/
+.runtime-workspace/
+.deploy-backups/
+.gstack/
+.gstack/

@@ -1,0 +1,112 @@
+{% extends "base_console.html" %}
+
+{% block page_content %}
+  <section class="panel panel-wide page-head">
+    <div class="panel-header">
+      <div>
+        <p class="panel-kicker">Worker quotas</p>
+        <h2>{{ page_heading }}</h2>
+      </div>
+      <p class="panel-note">{{ page_description }}</p>
+    </div>
+  </section>
+
+  <section class="panel panel-wide">
+    <div class="panel-header">
+      <div>
+        <p class="panel-kicker">Authority snapshot</p>
+        <h2>只读汇总</h2>
+      </div>
+      <p class="panel-note">
+        captured_at={{ worker_quota_meta.captured_at }} / realtime={{ worker_quota_meta.worker_realtime }} /
+        fallback={{ worker_quota_meta.worker_fallback }} / failed={{ worker_quota_meta.worker_failed }} /
+        无快照={{ worker_quota_meta.accounts_without_snapshot }}
+      </p>
+    </div>
+    <div class="summary-grid quota-summary-grid">
+      {% for card in worker_quota_summary_cards %}
+      <article class="summary-card" data-tone="{{ card.tone }}">
+        <span class="summary-label">{{ card.label }}</span>
+        <strong class="summary-value">{{ card.value }}</strong>
+        <p class="summary-help">{{ card.help }}</p>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+
+  {% if worker_quota_workers %}
+    {% for worker in worker_quota_workers %}
+    <section class="panel panel-wide quota-worker-panel">
+      <div class="quota-worker-header">
+        <div>
+          <p class="panel-kicker">Worker</p>
+          <h2>{{ worker.worker_id }}</h2>
+        </div>
+        <div class="quota-worker-badges">
+          <span class="status-badge" data-health="{{ worker.status_tone }}">{{ worker.status_label }}</span>
+          <span class="hero-tag">oauth={{ worker.account_total }}</span>
+          <span class="hero-tag">有快照={{ worker.accounts_with_snapshot }}</span>
+          <span class="hero-tag">失败={{ worker.fresh_probe_failures }}</span>
+        </div>
+      </div>
+      <div class="quota-worker-meta-grid">
+        <article class="quota-meta-card">
+          <strong>最近抓取</strong>
+          <div class="cell-meta">{{ worker.captured_at }}</div>
+        </article>
+        <article class="quota-meta-card">
+          <strong>Group</strong>
+          <div class="cell-meta">{{ worker.group_ids | join(", ") if worker.group_ids else "未提供 group" }}</div>
+        </article>
+        <article class="quota-meta-card">
+          <strong>缺少快照</strong>
+          <div class="cell-meta">{{ worker.accounts_without_snapshot }} 个 oauth 文件还没有最新 quota 快照</div>
+        </article>
+      </div>
+      <div class="table-shell">
+        <table class="host-table quota-table">
+          <thead>
+            <tr>
+              <th>oauth 文件</th>
+              <th>探测</th>
+              <th>配额摘要</th>
+              <th>来源与能力</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for account in worker.accounts %}
+            <tr>
+              <td>
+                <strong>{{ account.auth_name }}</strong>
+                <div class="cell-meta">{{ account.email }}</div>
+                <div class="cell-meta">group={{ account.group_id }} / provider={{ account.provider }} / status={{ account.account_status }}</div>
+              </td>
+              <td>
+                <span class="status-badge" data-health="{{ account.probe_tone }}">{{ account.probe_label }}</span>
+                <div class="cell-meta">{{ account.probe_observed_at }}</div>
+                <div class="cell-meta">{{ account.probe_message }}</div>
+              </td>
+              <td>
+                <strong>{{ account.quota_summary }}</strong>
+                <div class="cell-meta">reset={{ account.reset_at }}</div>
+                <div class="cell-meta">
+                  {{ "已拿到最新快照" if account.latest_snapshot_present else "当前没有最新配额快照" }}
+                </div>
+              </td>
+              <td>
+                <div>{{ account.capability_level }}</div>
+                <div class="cell-meta">{{ account.source_endpoint }}</div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+    {% endfor %}
+  {% else %}
+  <section class="panel panel-wide">
+    <article class="provider-card">{{ empty_worker_quota_message }}</article>
+  </section>
+  {% endif %}
+{% endblock %}

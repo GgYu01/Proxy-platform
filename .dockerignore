@@ -1,0 +1,14 @@
+.git
+.pytest_cache
+.venv
+.venv_fix
+__pycache__
+archive
+tmp
+context-engine-*.log
+findings.md
+progress.md
+task_plan.md
+tests
+state
+repos

@@ -9,6 +9,7 @@ description = "Thin orchestration shell for the proxy platform."
 requires-python = ">=3.9"
 dependencies = [
   "fastapi>=0.110",
+  "Jinja2>=3.1",
   "PyYAML>=6.0",
   "uvicorn>=0.30",
 ]
@@ -24,9 +25,13 @@ proxy-platform = "proxy_platform.cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
+include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+proxy_platform = ["templates/*.html", "static/*.css", "static/*.js"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

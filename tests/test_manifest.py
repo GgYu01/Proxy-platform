@@ -15,6 +15,7 @@ def test_load_manifest_requires_expected_repo_roles() -> None:
         "cliproxy_control_plane",
         "proxy_ops_private",
         "remote_browser",
+        "webchat_openai_runtime",
     ]
     assert manifest.default_mode == "public"
     assert manifest.supported_modes == ["public", "operator"]
@@ -24,6 +25,7 @@ def test_load_manifest_requires_expected_repo_roles() -> None:
     assert roles["cliproxy_control_plane"] == "northbound_control_plane"
     assert roles["proxy_ops_private"] == "private_ops_source_of_truth"
     assert roles["remote_browser"] == "optional_provider"
+    assert roles["webchat_openai_runtime"] == "optional_provider_runtime"
 
 
 def test_load_manifest_tracks_visibility_and_required_modes() -> None:
@@ -33,6 +35,9 @@ def test_load_manifest_tracks_visibility_and_required_modes() -> None:
     assert repo_map["proxy_ops_private"].visibility == "private"
     assert repo_map["proxy_ops_private"].required_modes == ["operator"]
     assert repo_map["remote_proxy"].optional is False
+    assert repo_map["webchat_openai_runtime"].visibility == "public"
+    assert repo_map["webchat_openai_runtime"].required_modes == ["operator"]
+    assert repo_map["webchat_openai_runtime"].optional is True
 
 
 def test_load_manifest_tracks_toolchain_profiles() -> None:
@@ -63,7 +68,10 @@ def test_load_manifest_tracks_state_sources_and_projections() -> None:
 
     host_registry = manifest.state_sources["host_registry"]
     observation = manifest.state_sources["host_observation"]
+    public_host_console = manifest.state_sources["public_host_console_snapshot"]
+    public_subscriptions = manifest.state_sources["public_subscription_snapshot"]
     subscription_projection = manifest.projections["subscription_nodes"]
+    public_host_projection = manifest.projections["public_host_console"]
 
     assert manifest.host_registry is not None
     assert manifest.host_registry.required_modes == ["operator"]
@@ -77,6 +85,15 @@ def test_load_manifest_tracks_state_sources_and_projections() -> None:
     assert observation.path == Path("state/observations/hosts.json")
     assert observation.ownership == "platform_observed_state"
 
+    assert public_host_console.kind == "public_host_console_snapshot"
+    assert public_host_console.repo_id == "proxy-platform"
+    assert public_host_console.path == Path("state/public/host_console.json")
+    assert public_host_console.required_modes == ["public"]
+
+    assert public_subscriptions.kind == "public_subscription_snapshot"
+    assert public_subscriptions.path == Path("state/public/subscriptions.json")
+    assert public_subscriptions.required_modes == ["public"]
+
     assert subscription_projection.kind == "subscription_projection"
     assert subscription_projection.source_ids == [
         "host_registry",
@@ -86,6 +103,9 @@ def test_load_manifest_tracks_state_sources_and_projections() -> None:
     assert subscription_projection.required_modes == ["operator"]
     assert subscription_projection.rules["include_unhealthy_observed_hosts"] is True
     assert subscription_projection.rules["require_registry_enabled"] is True
+    assert public_host_projection.kind == "public_host_console_projection"
+    assert public_host_projection.source_ids == ["public_host_console_snapshot"]
+    assert public_host_projection.required_modes == ["public"]
 
 
 def test_load_manifest_tracks_job_policy_and_audit_config() -> None:

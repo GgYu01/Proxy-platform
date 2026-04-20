@@ -21,12 +21,17 @@ from proxy_platform.manifest import ManifestError, PlatformManifest, load_manife
 from proxy_platform.inventory import load_host_registry
 from proxy_platform.projections import build_host_views, build_subscription_projection
 from proxy_platform.providers import describe_local_providers
+from proxy_platform.private_sync import apply_private_truth_sync
+from proxy_platform.private_sync import load_private_truth_sync_plan
+from proxy_platform.private_sync import plan_private_truth_sync
+from proxy_platform.public_state import export_public_state
 from proxy_platform.state import build_host_views as build_state_host_views
 from proxy_platform.state import load_host_observations
 from proxy_platform.state import load_host_registry as load_state_host_registry
 from proxy_platform.state import project_subscription
 from proxy_platform.state import StateFileError
 from proxy_platform.toolchain import diagnose_toolchain_profile
+from proxy_platform.view_state import load_view_state
 from proxy_platform.web_app import run_web_console
 from proxy_platform.workspace import (
     build_init_plan,
@@ -91,6 +96,9 @@ def run_cli(argv: list[str], *, stdout: TextIO, stderr: TextIO | None = None) ->
             )
         return 0
 
+    if args.command == "exports" and args.exports_command in {"plan-sync-private", "apply-sync-private"}:
+        return _run_private_truth_sync_command(args=args, stdout=stdout, stderr=stderr)
+
     try:
         manifest = _load_manifest_from_args(args)
     except ManifestError as exc:
@@ -107,38 +115,52 @@ def run_cli(argv: list[str], *, stdout: TextIO, stderr: TextIO | None = None) ->
 
     if args.command == "hosts" and args.hosts_command == "list":
         try:
-            host_registry_source = _require_host_registry_source(manifest, mode)
-        except ManifestError as exc:
+            host_views, _ = load_view_state(manifest=manifest, workspace_root=workspace_root, mode=mode)
+        except (ManifestError, ValueError) as exc:
             stderr.write(f"{exc}\n")
             return 2
-        registry = load_host_registry(host_registry_source, workspace_root)
-        views = build_host_views(registry)
-        publishable = sum(1 for view in views if view.should_publish)
-        stdout.write(f"hosts: total={len(views)} publishable={publishable}\n")
-        for view in views:
+        publishable = sum(1 for view in host_views if bool(view["should_publish"]))
+        stdout.write(f"hosts: total={len(host_views)} publishable={publishable}\n")
+        for view in host_views:
             stdout.write(
-                f"- {view.name}: observed={view.observed_health} publish={str(view.should_publish).lower()} "
-                f"provider={view.provider} topology={view.deployment_topology} "
-                f"service={view.runtime_service} host={view.host} ssh_port={view.ssh_port} "
-                f"change_policy={view.change_policy}\n"
+                f"- {view['name']}: observed={view['observed_health']} "
+                f"publish={str(bool(view['should_publish'])).lower()} "
+                f"provider={view['provider']} topology={view['deployment_topology']} "
+                f"service={view['runtime_service']}"
             )
+            if "host" in view and "ssh_port" in view and "change_policy" in view:
+                stdout.write(
+                    f" host={view['host']} ssh_port={view['ssh_port']} change_policy={view['change_policy']}"
+                )
+            stdout.write("\n")
         return 0
 
     if args.command == "subscriptions" and args.subscriptions_command == "list":
         try:
-            host_registry_source = _require_host_registry_source(manifest, mode)
-        except ManifestError as exc:
+            _, projection = load_view_state(manifest=manifest, workspace_root=workspace_root, mode=mode)
+        except (ManifestError, ValueError) as exc:
             stderr.write(f"{exc}\n")
             return 2
-        registry = load_host_registry(host_registry_source, workspace_root)
-        projection = build_subscription_projection(registry)
-        stdout.write(f"multi_node_url={projection.multi_node_url}\n")
-        stdout.write(f"multi_node_hiddify={projection.multi_node_hiddify_import}\n")
-        stdout.write(f"remote_profile_url={projection.remote_profile_url}\n")
-        for node in projection.per_node:
+        multi_node_url = projection["multi_node_url"] if isinstance(projection, dict) else projection.multi_node_url
+        multi_node_hiddify = (
+            projection["multi_node_hiddify_import"]
+            if isinstance(projection, dict)
+            else projection.multi_node_hiddify_import
+        )
+        remote_profile_url = (
+            projection["remote_profile_url"] if isinstance(projection, dict) else projection.remote_profile_url
+        )
+        stdout.write(f"multi_node_url={multi_node_url}\n")
+        stdout.write(f"multi_node_hiddify={multi_node_hiddify}\n")
+        stdout.write(f"remote_profile_url={remote_profile_url}\n")
+        for node in projection["per_node"] if isinstance(projection, dict) else projection.per_node:
+            alias = node["alias"] if isinstance(node, dict) else node.alias
+            name = node["name"] if isinstance(node, dict) else node.name
+            v2ray_url = node["v2ray_url"] if isinstance(node, dict) else node.v2ray_url
+            hiddify_url = node["hiddify_import_url"] if isinstance(node, dict) else node.hiddify_import_url
             stdout.write(
-                f"- {node.name}: alias={node.alias} v2ray_url={node.v2ray_url} "
-                f"hiddify_url={node.hiddify_import_url}\n"
+                f"- {name}: alias={alias} v2ray_url={v2ray_url} "
+                f"hiddify_url={hiddify_url}\n"
             )
         return 0
 
@@ -331,6 +353,24 @@ def run_cli(argv: list[str], *, stdout: TextIO, stderr: TextIO | None = None) ->
             stderr.write(f"{exc}\n")
             return 2
 
+    if args.command == "exports":
+        try:
+            if args.exports_command == "export-public":
+                result = export_public_state(
+                    manifest=manifest,
+                    workspace_root=workspace_root,
+                    output_root=args.output_root,
+                )
+                stdout.write(
+                    "public state exported: "
+                    f"host_console={result.host_console_path} subscriptions={result.subscription_path} "
+                    f"generated_at={result.generated_at}\n"
+                )
+                return 0
+        except (ManifestError, ValueError) as exc:
+            stderr.write(f"{exc}\n")
+            return 2
+
     stderr.write("unsupported command\n")
     return 2
 
@@ -403,6 +443,35 @@ def _build_parser() -> argparse.ArgumentParser:
     subscriptions_preview_parser.add_argument("--registry", required=True)
     subscriptions_preview_parser.add_argument("--observations", default=None)
 
+    exports_parser = subparsers.add_parser("exports", help="Derived public snapshots and private truth sync plans")
+    exports_parser.add_argument("--manifest", default="platform.manifest.yaml")
+    exports_parser.add_argument("--workspace-root", default=".")
+    exports_parser.add_argument("--mode", default=None)
+    exports_subparsers = exports_parser.add_subparsers(dest="exports_command", required=True)
+
+    exports_public_parser = exports_subparsers.add_parser(
+        "export-public",
+        help="Export sanitized public host/subscription snapshots from operator truth",
+    )
+    exports_public_parser.add_argument("--manifest", default="platform.manifest.yaml")
+    exports_public_parser.add_argument("--workspace-root", default=".")
+    exports_public_parser.add_argument("--output-root", default="state/public")
+
+    exports_plan_sync_private_parser = exports_subparsers.add_parser(
+        "plan-sync-private",
+        help="Create a reviewed plan to sync runtime workspace truth back into the private repo checkout",
+    )
+    exports_plan_sync_private_parser.add_argument("--runtime-workspace-root", required=True)
+    exports_plan_sync_private_parser.add_argument("--repo-root", default=".")
+    exports_plan_sync_private_parser.add_argument("--output", default=None)
+
+    exports_apply_sync_private_parser = exports_subparsers.add_parser(
+        "apply-sync-private",
+        help="Apply a previously reviewed private truth sync plan",
+    )
+    exports_apply_sync_private_parser.add_argument("--plan-file", required=True)
+    exports_apply_sync_private_parser.add_argument("--confirm", action="store_true")
+
     providers_parser = subparsers.add_parser("providers", help="Local provider lifecycle policies")
     providers_subparsers = providers_parser.add_subparsers(dest="providers_command", required=True)
     providers_list_parser = providers_subparsers.add_parser("list", help="List provider retry/timeout budgets")
@@ -471,7 +540,7 @@ def _build_parser() -> argparse.ArgumentParser:
     jobs_audit_list_parser.add_argument("--workspace-root", default=".")
     jobs_audit_list_parser.add_argument("--mode", default=None)
 
-    web_parser = subparsers.add_parser("web", help="Run the minimal platform web console")
+    web_parser = subparsers.add_parser("web", help="Run the operator web workbench")
     web_parser.add_argument("--manifest", default="platform.manifest.yaml")
     web_parser.add_argument("--workspace-root", default=".")
     web_parser.add_argument("--mode", default=None)
@@ -479,6 +548,42 @@ def _build_parser() -> argparse.ArgumentParser:
     web_parser.add_argument("--port", type=int, default=8765)
 
     return parser
+
+
+def _run_private_truth_sync_command(*, args: argparse.Namespace, stdout: TextIO, stderr: TextIO) -> int:
+    try:
+        if args.exports_command == "plan-sync-private":
+            plan = plan_private_truth_sync(
+                runtime_workspace_root=args.runtime_workspace_root,
+                repo_root=args.repo_root,
+                output_path=args.output,
+            )
+            stdout.write(
+                "private truth sync planned: "
+                f"id={plan.plan_id} changed_files={len(plan.actions)} plan_path={plan.plan_path}\n"
+            )
+            for action in plan.actions:
+                stdout.write(f"  - {action.relative_path}: {action.action}\n")
+            return 0
+
+        if args.exports_command == "apply-sync-private":
+            result = apply_private_truth_sync(
+                plan=load_private_truth_sync_plan(args.plan_file),
+                confirm=args.confirm,
+            )
+            stdout.write(
+                "private truth sync applied: "
+                f"id={result.plan_id} updated_files={len(result.updated_files)} audit_path={result.audit_path}\n"
+            )
+            for relative_path in result.updated_files:
+                stdout.write(f"  - {relative_path}\n")
+            return 0
+    except ValueError as exc:
+        stderr.write(f"{exc}\n")
+        return 2
+
+    stderr.write("unsupported private truth sync command\n")
+    return 2
 
 
 def _load_manifest_from_args(args: argparse.Namespace) -> PlatformManifest:

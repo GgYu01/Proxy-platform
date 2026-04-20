@@ -1,0 +1,32 @@
+{% extends "base_console.html" %}
+
+{% block page_content %}
+  <section class="panel panel-wide page-head">
+    <div class="panel-header">
+      <div>
+        <p class="panel-kicker">Audit</p>
+        <h2>{{ page_heading }}</h2>
+      </div>
+      <p class="panel-note">{{ page_description }}</p>
+    </div>
+  </section>
+
+  <section class="panel panel-wide">
+    <ul id="audit-list" class="audit-list">
+      {% if audit_rows %}
+        {% for item in audit_rows %}
+        <li class="audit-item" data-tone="{{ item.tone }}">
+          <div class="audit-topline">
+            <strong>{{ item.job_kind }}</strong>
+            <span class="status-badge" data-health="{{ item.tone }}">{{ item.status }}</span>
+          </div>
+          <div class="cell-meta">{{ item.created_at }} / event={{ item.event }}</div>
+          <div>{{ item.summary }}</div>
+        </li>
+        {% endfor %}
+      {% else %}
+        <li class="audit-item audit-empty">{{ empty_audit_message }}</li>
+      {% endif %}
+    </ul>
+  </section>
+{% endblock %}

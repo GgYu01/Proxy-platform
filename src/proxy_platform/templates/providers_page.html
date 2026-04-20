@@ -1,0 +1,30 @@
+{% extends "base_console.html" %}
+
+{% block page_content %}
+  <section class="panel panel-wide page-head">
+    <div class="panel-header">
+      <div>
+        <p class="panel-kicker">Providers</p>
+        <h2>{{ page_heading }}</h2>
+      </div>
+      <p class="panel-note">{{ page_description }}</p>
+    </div>
+  </section>
+
+  <section class="panel panel-wide">
+    <div class="provider-list">
+      {% if provider_rows %}
+        {% for provider in provider_rows %}
+        <article class="provider-card">
+          <strong>{{ provider.provider_id }}</strong>
+          <div class="cell-meta">{{ provider.kind }} / owner={{ provider.owner_repo_id }}</div>
+          <div class="cell-meta">startup budget: {{ provider.startup_budget }}</div>
+          <div class="cell-meta">request budget: {{ provider.request_budget }}</div>
+        </article>
+        {% endfor %}
+      {% else %}
+        <article class="provider-card">{{ empty_provider_message }}</article>
+      {% endif %}
+    </div>
+  </section>
+{% endblock %}

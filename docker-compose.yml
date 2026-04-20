@@ -1,0 +1,44 @@
+services:
+  proxy-platform-operator:
+    image: ${PROXY_PLATFORM_OPERATOR_IMAGE:-proxy-platform-operator:local}
+    build:
+      context: .
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    environment:
+      PROXY_PLATFORM_RUNTIME_MANIFEST: /app/platform.manifest.yaml
+      PROXY_PLATFORM_RUNTIME_WORKSPACE_ROOT: /runtime/workspace
+      PROXY_PLATFORM_RUNTIME_SEED_ROOT: /runtime/seed
+      PROXY_PLATFORM_WEB_MODE: ${PROXY_PLATFORM_OPERATOR_MODE:-operator}
+      PROXY_PLATFORM_WEB_HOST: 0.0.0.0
+      PROXY_PLATFORM_WEB_PORT: 8765
+      PROXY_PLATFORM_WEB_BASIC_AUTH_USERNAME: ${PROXY_PLATFORM_OPERATOR_BASIC_AUTH_USERNAME}
+      PROXY_PLATFORM_WEB_BASIC_AUTH_PASSWORD: ${PROXY_PLATFORM_OPERATOR_BASIC_AUTH_PASSWORD}
+    volumes:
+      - ./.runtime-workspace:/runtime/workspace
+      - ./.runtime-seed:/runtime/seed:ro
+    ports:
+      - "${PROXY_PLATFORM_OPERATOR_HOST_PORT:-18082}:8765"
+    networks:
+      - proxy_platform_operator_net
+      - infra_gateway_net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8765/health >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=infra_gateway_net"
+      - "traefik.http.routers.proxy-platform-operator.rule=Host(`${PROXY_PLATFORM_OPERATOR_PUBLIC_HOST:-proxy-platform-operator.svc.prod.lab.gglohh.top}`)"
+      - "traefik.http.routers.proxy-platform-operator.entrypoints=websecure"
+      - "traefik.http.routers.proxy-platform-operator.tls=true"
+      - "traefik.http.services.proxy-platform-operator.loadbalancer.server.port=8765"
+
+networks:
+  proxy_platform_operator_net:
+    driver: bridge
+  infra_gateway_net:
+    external: true

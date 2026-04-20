@@ -1,0 +1,98 @@
+{% extends "base_console.html" %}
+
+{% block page_content %}
+  <section class="panel panel-wide page-head">
+    <div class="panel-header">
+      <div>
+        <p class="panel-kicker">Subscriptions</p>
+        <h2>{{ page_heading }}</h2>
+      </div>
+      <p class="panel-note">{{ page_description }}</p>
+    </div>
+  </section>
+
+  <section class="panel panel-wide subscriptions-bundle-panel">
+    <div class="panel-header">
+      <div>
+        <p class="panel-kicker">Bundle</p>
+        <h2>多节点入口</h2>
+      </div>
+      <p class="panel-note">先区分“手动订阅 URL”和“Hiddify Deep Link”。前者是普通 HTTPS 订阅地址，后者是拉起 Hiddify 的 deep link，不是同一种东西。</p>
+    </div>
+    <div class="subscription-guidance">
+      <article class="result-card">
+        <h3>手动导入怎么用</h3>
+        <p class="panel-note">如果你是在 Hiddify、v2rayN 或其他客户端里手动填写订阅地址，请复制 HTTPS 订阅 URL。</p>
+      </article>
+      <article class="result-card">
+        <h3>Hiddify Deep Link 是什么</h3>
+        <p class="panel-note">`hiddify://...` 适合浏览器点击拉起 Hiddify，或者在 Hiddify 里从剪贴板导入。不要把它粘贴到手动订阅 URL 输入框。</p>
+      </article>
+    </div>
+    <div class="entry-grid subscription-entry-grid">
+      <button class="link-card" data-copy="{{ subscription_multi_node_url }}" data-copy-kind="subscription-url" data-copy-label="多节点订阅 URL">
+        <span class="link-label">Manual URL</span>
+        <strong>手动订阅 URL</strong>
+        <small class="link-code">{{ subscription_multi_node_url }}</small>
+      </button>
+      <article class="link-card">
+        <span class="link-label">Hiddify</span>
+        <strong>Hiddify Deep Link</strong>
+        <small>适合点击拉起 Hiddify，或者在 Hiddify 中从剪贴板导入；不要粘贴到手动订阅 URL 输入框。</small>
+        <div class="subscription-actions">
+          <a class="ghost-button action-link" href="{{ subscription_multi_node_hiddify }}">打开 Hiddify</a>
+          <button type="button" class="ghost-button" data-copy="{{ subscription_multi_node_hiddify }}" data-copy-kind="hiddify-deep-link" data-copy-label="多节点 Hiddify Deep Link">复制 Hiddify Deep Link</button>
+        </div>
+        <small class="link-code">{{ subscription_multi_node_hiddify }}</small>
+      </article>
+      <button class="link-card" data-copy="{{ subscription_remote_profile_url }}" data-copy-kind="profile-url" data-copy-label="远端 sing-box profile">
+        <span class="link-label">远端 profile</span>
+        <strong>sing-box profile</strong>
+        <small class="link-code">{{ subscription_remote_profile_url }}</small>
+      </button>
+    </div>
+  </section>
+
+  <section class="panel panel-half">
+    <div class="panel-header">
+      <div>
+        <p class="panel-kicker">Per Node</p>
+        <h2>单节点入口</h2>
+      </div>
+      <p class="panel-note">这里也分开普通订阅 URL 和 Hiddify Deep Link，避免 operator 复制错类型。</p>
+    </div>
+    <ul class="subscription-list">
+      {% for item in subscription_rows %}
+      <li class="subscription-item">
+        <div>
+          <strong>{{ item.name }}</strong>
+          <div class="cell-meta">{{ item.alias }}</div>
+        </div>
+        <span class="status-badge" data-health="{{ item.health_tone }}">{{ item.health_label }}</span>
+        <div class="subscription-actions">
+          <button type="button" class="ghost-button" data-copy="{{ item.v2ray_url }}" data-copy-kind="subscription-url" data-copy-label="{{ item.name }} 订阅 URL">复制订阅 URL</button>
+          <button type="button" class="ghost-button" data-copy="{{ item.hiddify_import_url }}" data-copy-kind="hiddify-deep-link" data-copy-label="{{ item.name }} Hiddify Deep Link">复制 Hiddify Deep Link</button>
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  <section class="panel panel-half">
+    <div class="panel-header">
+      <div>
+        <p class="panel-kicker">Boundary</p>
+        <h2>页面边界</h2>
+      </div>
+      <p class="panel-note">订阅页只展示派生结果，不替代 private 真相源，也不直接改配置。</p>
+    </div>
+    <article class="result-card">
+      <h3>这页负责什么</h3>
+      <ul>
+        <li>集中查看多节点和单节点订阅入口。</li>
+        <li>给 operator 一个稳定的复制面板。</li>
+        <li>避免把入口散落在主机页、作业页和 README 里。</li>
+      </ul>
+    </article>
+  </section>
+{% endblock %}

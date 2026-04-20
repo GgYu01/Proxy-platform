@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ page_title }}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/static/operator_console.css" />
+  </head>
+  <body class="console-shell" data-mode="{{ active_mode }}" data-jobs-enabled="{{ 'true' if jobs_enabled else 'false' }}" data-page="{{ active_page }}">
+    <header class="hero-bar">
+      <div class="hero-main">
+        <p class="eyebrow">{{ manifest_name }} / operator workbench</p>
+        <h1>proxy-platform 现场工作台</h1>
+        <p class="hero-copy">{{ hero_copy }}</p>
+      </div>
+      <div class="hero-side">
+        {% if observations_refresh_enabled %}
+        <button type="button" class="toolbar-button" data-observation-refresh>刷新健康观测</button>
+        {% endif %}
+        <div class="hero-tags">
+          <span class="hero-tag">视角: {{ mode_label }}</span>
+          <span class="hero-tag">真相源: {{ truth_source_label }}</span>
+          <span class="hero-tag">作业: {{ 'plan / confirm / apply' if jobs_enabled else 'read-only' }}</span>
+        </div>
+      </div>
+    </header>
+
+    <nav class="shell-nav" aria-label="工作台导航">
+      {% for item in nav_items %}
+      <a class="shell-nav-link" href="{{ item.href }}"{% if item.active %} aria-current="page"{% endif %}>
+        <span class="link-label">{{ item.kicker }}</span>
+        <strong>{{ item.label }}</strong>
+        <small>{{ item.help }}</small>
+      </a>
+      {% endfor %}
+    </nav>
+
+    <main class="console-grid">
+      {% block page_content %}{% endblock %}
+    </main>
+
+    <div id="toast-region" aria-live="polite" aria-atomic="true"></div>
+    <script id="console-bootstrap" type="application/json">{{ bootstrap_json | safe }}</script>
+    <script src="/static/operator_console.js"></script>
+  </body>
+</html>

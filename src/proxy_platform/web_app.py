@@ -1,13 +1,20 @@
 from __future__ import annotations
 
+import base64
+import binascii
 from dataclasses import asdict
-from html import escape
+import json
 from pathlib import Path
+import secrets
+import sys
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 
+from proxy_platform.control_plane_read_model import ControlPlaneReadClient
 from proxy_platform.jobs import (
     JobApplyUnsupportedError,
     JobConfigError,
@@ -18,21 +25,57 @@ from proxy_platform.jobs import (
     plan_job,
     resolve_job_plan_path,
 )
-from proxy_platform.inventory import load_host_registry
+from proxy_platform.manifest import ManifestError
 from proxy_platform.manifest import load_manifest
-from proxy_platform.projections import build_host_views, build_subscription_projection
+from proxy_platform.observation_probe import refresh_host_observations
 from proxy_platform.providers import describe_local_providers
+from proxy_platform.view_state import load_view_state
+from proxy_platform.web_view import (
+    build_audit_page_context,
+    build_hosts_page_context,
+    build_jobs_page_context,
+    build_overview_page_context,
+    build_providers_page_context,
+    build_subscriptions_page_context,
+    build_worker_quotas_page_context,
+)
+
+
+PACKAGE_ROOT = Path(__file__).resolve().parent
+TEMPLATES = Jinja2Templates(directory=str(PACKAGE_ROOT / "templates"))
+STATIC_ROOT = PACKAGE_ROOT / "static"
 
 
 def create_app(
     manifest_path: str | Path,
     workspace_root: str | Path | None = None,
     mode: str | None = None,
+    basic_auth_username: str | None = None,
+    basic_auth_password: str | None = None,
+    control_plane_read_client: ControlPlaneReadClient | None = None,
 ) -> FastAPI:
     manifest = load_manifest(Path(manifest_path).resolve())
     resolved_workspace_root = Path(workspace_root or manifest.source_path.parent).resolve()
     active_mode = mode or manifest.default_mode
     app = FastAPI(title="proxy-platform web console")
+    app.mount("/static", StaticFiles(directory=str(STATIC_ROOT)), name="static")
+    auth_enabled = bool(basic_auth_username and basic_auth_password)
+
+    @app.middleware("http")
+    async def maybe_require_basic_auth(request: Request, call_next):
+        if not auth_enabled or request.url.path == "/health":
+            return await call_next(request)
+        if _is_basic_auth_authorized(
+            authorization_header=request.headers.get("Authorization"),
+            expected_username=str(basic_auth_username),
+            expected_password=str(basic_auth_password),
+        ):
+            return await call_next(request)
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "authentication required"},
+            headers={"WWW-Authenticate": 'Basic realm="proxy-platform"'},
+        )
 
     def require_host_registry():
         if manifest.host_registry is None:
@@ -44,8 +87,38 @@ def create_app(
             )
         return manifest.host_registry
 
+    def observations_refresh_enabled() -> bool:
+        return (
+            manifest.host_registry is not None
+            and manifest.host_registry.applies_to_mode(active_mode)
+            and manifest.host_registry.observations_path is not None
+        )
+
+    def refresh_observations(*, force: bool, fail_silently: bool):
+        if not observations_refresh_enabled():
+            return None
+        source = manifest.host_registry
+        assert source is not None and source.observations_path is not None
+        observations_path = (
+            source.observations_path
+            if source.observations_path.is_absolute()
+            else resolved_workspace_root / source.observations_path
+        )
+        if not force and observations_path.exists():
+            return None
+        try:
+            return refresh_host_observations(source=source, workspace_root=resolved_workspace_root)
+        except (OSError, ValueError) as exc:
+            if fail_silently:
+                print(f"[proxy-platform] observation refresh skipped: {exc}", file=sys.stderr)
+                return None
+            raise HTTPException(status_code=500, detail=f"failed to refresh observations: {exc}") from exc
+
     def jobs_enabled() -> bool:
         return manifest.jobs is not None and manifest.jobs.applies_to_mode(active_mode)
+
+    def worker_quotas_enabled() -> bool:
+        return control_plane_read_client is not None
 
     def require_jobs() -> None:
         if manifest.jobs is None:
@@ -57,10 +130,15 @@ def create_app(
             )
 
     def load_current_state() -> tuple[list[dict[str, Any]], dict[str, Any], list[dict[str, Any]]]:
-        host_registry_source = require_host_registry()
-        registry = load_host_registry(host_registry_source, resolved_workspace_root)
-        host_views = [asdict(item) for item in build_host_views(registry)]
-        subscriptions = asdict(build_subscription_projection(registry))
+        refresh_observations(force=False, fail_silently=True)
+        try:
+            host_views, subscriptions = load_view_state(
+                manifest=manifest,
+                workspace_root=resolved_workspace_root,
+                mode=active_mode,
+            )
+        except (ManifestError, ValueError) as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
         providers = [asdict(item) for item in describe_local_providers(manifest)]
         return host_views, subscriptions, providers
 
@@ -71,6 +149,18 @@ def create_app(
             _serialize_audit_record(item)
             for item in list_audit_records(manifest, resolved_workspace_root, active_mode)
         ]
+
+    def load_worker_quotas() -> dict[str, Any]:
+        if control_plane_read_client is None:
+            raise HTTPException(status_code=404, detail="worker quota view is not configured")
+        try:
+            return control_plane_read_client.fetch_worker_quotas()
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    @app.get("/health")
+    def health() -> dict[str, Any]:
+        return {"status": "ok"}
 
     @app.get("/api/hosts")
     def api_hosts() -> dict[str, Any]:
@@ -86,6 +176,17 @@ def create_app(
     def api_providers() -> dict[str, Any]:
         _, _, providers = load_current_state()
         return {"providers": providers}
+
+    @app.get("/api/worker-quotas")
+    def api_worker_quotas() -> dict[str, Any]:
+        return load_worker_quotas()
+
+    @app.post("/api/observations/refresh")
+    def api_refresh_observations() -> dict[str, Any]:
+        if not observations_refresh_enabled():
+            raise HTTPException(status_code=404, detail="observations refresh is not configured")
+        result = refresh_observations(force=True, fail_silently=False)
+        return {"refresh": _serialize_observation_refresh_result(result)}
 
     @app.get("/api/jobs")
     def api_jobs() -> dict[str, Any]:
@@ -150,385 +251,234 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {"result": _serialize_job_apply_result(result)}
 
-    @app.get("/", response_class=HTMLResponse)
-    def index() -> str:
+    @app.get("/")
+    def overview_page(request: Request):
         host_views, subscriptions, providers = load_current_state()
         audits = load_audits()
-        host_rows = "".join(
-            (
-                "<tr>"
-                f"<td>{escape(item['name'])}</td>"
-                f"<td>{escape(item['provider'])}</td>"
-                f"<td>{escape(item['deployment_topology'])}</td>"
-                f"<td>{escape(item['observed_health'])}</td>"
-                f"<td>{escape(str(item['should_publish']).lower())}</td>"
-                "</tr>"
-            )
-            for item in host_views
+        context = build_overview_page_context(
+            manifest_name=manifest.name,
+            active_mode=active_mode,
+            host_views=host_views,
+            subscriptions=subscriptions,
+            providers=providers,
+            audits=audits,
+            jobs_enabled=jobs_enabled(),
+            worker_quotas_enabled=worker_quotas_enabled(),
         )
-        subscription_rows = "".join(
-            (
-                "<li>"
-                f"{escape(item['name'])}: "
-                f"<button data-copy=\"{escape(item['v2ray_url'])}\">copy v2ray</button> "
-                f"<button data-copy=\"{escape(item['hiddify_import_url'])}\">copy hiddify</button>"
-                "</li>"
-            )
-            for item in subscriptions["per_node"]
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="overview_page.html",
+            context={
+                "request": request,
+                **context,
+                "observations_refresh_enabled": observations_refresh_enabled(),
+                "bootstrap_json": json.dumps(
+                    {
+                        "jobs_enabled": jobs_enabled(),
+                        "observations_refresh_enabled": observations_refresh_enabled(),
+                        "worker_quotas_enabled": worker_quotas_enabled(),
+                    },
+                    ensure_ascii=False,
+                ),
+            },
         )
-        provider_rows = "".join(
-            (
-                "<li>"
-                f"{escape(item['provider_id'])}: startup_timeout={item['startup_timeout_seconds']} "
-                f"request_timeout={item['request_timeout_seconds']}"
-                "</li>"
-            )
-            for item in providers
+
+    @app.get("/hosts")
+    def hosts_page(request: Request):
+        host_views, subscriptions, providers = load_current_state()
+        audits = load_audits()
+        context = build_hosts_page_context(
+            manifest_name=manifest.name,
+            active_mode=active_mode,
+            host_views=host_views,
+            subscriptions=subscriptions,
+            providers=providers,
+            audits=audits,
+            jobs_enabled=jobs_enabled(),
+            worker_quotas_enabled=worker_quotas_enabled(),
         )
-        audit_rows = "".join(
-            (
-                "<li>"
-                f"{escape(item['created_at'])}: event={escape(item['event'])} "
-                f"job={escape(item['job_kind'])} status={escape(item['status'])} "
-                f"summary={escape(item['summary'])}"
-                "</li>"
-            )
-            for item in audits[:10]
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="hosts_page.html",
+            context={
+                "request": request,
+                **context,
+                "observations_refresh_enabled": observations_refresh_enabled(),
+                "bootstrap_json": json.dumps(
+                    {
+                        "jobs_enabled": jobs_enabled(),
+                        "observations_refresh_enabled": observations_refresh_enabled(),
+                        "worker_quotas_enabled": worker_quotas_enabled(),
+                    },
+                    ensure_ascii=False,
+                ),
+            },
         )
-        job_section = ""
-        if jobs_enabled():
-            job_section = """
-    <section>
-      <h2>主机登记作业</h2>
-      <form id="add-host-form">
-        <label>主机名<input name="name" required /></label>
-        <label>主机地址<input name="host" required /></label>
-        <div class="inline">
-          <label>SSH 端口<input name="ssh_port" type="number" value="22" required /></label>
-          <label>基准端口<input name="base_port" type="number" value="10000" required /></label>
-        </div>
-        <label>订阅别名<input name="subscription_alias" required /></label>
-        <div class="inline">
-          <label>provider<input name="provider" required /></label>
-          <label>change_policy
-            <select name="change_policy">
-              <option value="mutable">mutable</option>
-              <option value="frozen">frozen</option>
-            </select>
-          </label>
-        </div>
-        <div class="inline">
-          <label>deployment_topology
-            <select name="deployment_topology">
-              <option value="standalone_vps">standalone_vps</option>
-              <option value="infra_core_sidecar">infra_core_sidecar</option>
-            </select>
-          </label>
-          <label>runtime_service
-            <select name="runtime_service">
-              <option value="cliproxy-plus">cliproxy-plus</option>
-            </select>
-          </label>
-        </div>
-        <label><input name="enabled" type="checkbox" checked /> enabled</label>
-        <label><input name="include_in_subscription" type="checkbox" checked /> include_in_subscription</label>
-        <label><input name="infra_core_candidate" type="checkbox" checked /> infra_core_candidate</label>
-        <button type="submit">先生成新增计划</button>
-      </form>
-      <form id="remove-host-form">
-        <label>要移除的主机名<input name="name" required /></label>
-        <button type="submit">先生成移除计划</button>
-      </form>
-      <form id="remote-plan-form">
-        <label>远端移交单主机名<input name="name" required /></label>
-        <div class="inline">
-          <button type="button" data-remote-kind="deploy_host">计划部署</button>
-          <button type="button" data-remote-kind="decommission_host">计划摘除</button>
-        </div>
-      </form>
-      <form id="apply-plan-form">
-        <label>待 apply 的计划文件路径<input id="apply-plan-path" name="plan_path" required /></label>
-        <button type="submit">明确确认后 apply</button>
-      </form>
-      <p id="job-status">这里会显示最近一次作业 plan / apply 结果。远端部署类作业在当前阶段只会生成 authority handoff 移交单，不会由页面直接 SSH 执行。</p>
-    </section>
-    <section>
-      <h2>作业审计</h2>
-      <ul id="audit-list">"""
-            job_section += audit_rows or "<li>当前还没有审计事件。</li>"
-            job_section += """</ul>
-    </section>"""
 
-        script = """
-    <script>
-      const statusNode = document.getElementById("job-status");
-      const applyPlanPathInput = document.getElementById("apply-plan-path");
-      const auditListNode = document.getElementById("audit-list");
+    @app.get("/subscriptions")
+    def subscriptions_page(request: Request):
+        host_views, subscriptions, providers = load_current_state()
+        audits = load_audits()
+        context = build_subscriptions_page_context(
+            manifest_name=manifest.name,
+            active_mode=active_mode,
+            host_views=host_views,
+            subscriptions=subscriptions,
+            providers=providers,
+            audits=audits,
+            jobs_enabled=jobs_enabled(),
+            worker_quotas_enabled=worker_quotas_enabled(),
+        )
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="subscriptions_page.html",
+            context={
+                "request": request,
+                **context,
+                "observations_refresh_enabled": observations_refresh_enabled(),
+                "bootstrap_json": json.dumps(
+                    {
+                        "jobs_enabled": jobs_enabled(),
+                        "observations_refresh_enabled": observations_refresh_enabled(),
+                        "worker_quotas_enabled": worker_quotas_enabled(),
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        )
 
-      async function copyText(text) {
-        await navigator.clipboard.writeText(text);
-      }
+    @app.get("/providers")
+    def providers_page(request: Request):
+        host_views, subscriptions, providers = load_current_state()
+        audits = load_audits()
+        context = build_providers_page_context(
+            manifest_name=manifest.name,
+            active_mode=active_mode,
+            host_views=host_views,
+            subscriptions=subscriptions,
+            providers=providers,
+            audits=audits,
+            jobs_enabled=jobs_enabled(),
+            worker_quotas_enabled=worker_quotas_enabled(),
+        )
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="providers_page.html",
+            context={
+                "request": request,
+                **context,
+                "observations_refresh_enabled": observations_refresh_enabled(),
+                "bootstrap_json": json.dumps(
+                    {
+                        "jobs_enabled": jobs_enabled(),
+                        "observations_refresh_enabled": observations_refresh_enabled(),
+                        "worker_quotas_enabled": worker_quotas_enabled(),
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        )
 
-      function escapeHtml(value) {
-        return String(value)
-          .replaceAll("&", "&amp;")
-          .replaceAll("<", "&lt;")
-          .replaceAll(">", "&gt;")
-          .replaceAll('"', "&quot;")
-          .replaceAll("'", "&#39;");
-      }
+    @app.get("/worker-quotas")
+    def worker_quotas_page(request: Request):
+        worker_quotas = load_worker_quotas()
+        host_views, subscriptions, providers = load_current_state()
+        audits = load_audits()
+        context = build_worker_quotas_page_context(
+            manifest_name=manifest.name,
+            active_mode=active_mode,
+            host_views=host_views,
+            subscriptions=subscriptions,
+            providers=providers,
+            audits=audits,
+            jobs_enabled=jobs_enabled(),
+            worker_quotas=worker_quotas,
+        )
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="worker_quotas_page.html",
+            context={
+                "request": request,
+                **context,
+                "observations_refresh_enabled": observations_refresh_enabled(),
+                "bootstrap_json": json.dumps(
+                    {
+                        "jobs_enabled": jobs_enabled(),
+                        "observations_refresh_enabled": observations_refresh_enabled(),
+                        "worker_quotas_enabled": worker_quotas_enabled(),
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        )
 
-      async function createPlan(jobKind, payload) {
-        const response = await fetch("/api/jobs/plan", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ job_kind: jobKind, payload, requested_by: "operator-web" }),
-        });
-        const body = await response.json();
-        if (!response.ok) {
-          throw new Error(body.detail || "plan failed");
-        }
-        return body.plan;
-      }
-
-      async function applyPlan(planPath) {
-        const response = await fetch("/api/jobs/apply", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ plan_path: planPath, confirm: true, requested_by: "operator-web" }),
-        });
-        const body = await response.json();
-        if (!response.ok) {
-          throw new Error(body.detail || "apply failed");
-        }
-        return body.result;
-      }
-
-      function formatPlan(plan) {
-        const lines = [
-          `planned: ${plan.job_id}`,
-          `kind: ${plan.job_kind}`,
-          `executor: ${plan.executor}`,
-          `apply_supported: ${plan.apply_supported}`,
-          `plan_path: ${plan.plan_path}`,
-        ];
-        if (plan.authority_adapter_id) {
-          lines.push(`authority_adapter: ${plan.authority_adapter_id}`);
-        }
-        if (plan.authority_topology) {
-          lines.push(`authority_topology: ${plan.authority_topology}`);
-        }
-        if (plan.handoff_action) {
-          lines.push(`handoff_action: ${plan.handoff_action}`);
-        }
-        for (const step of plan.preview_steps) {
-          lines.push(`preview: ${step}`);
-        }
-        for (const warning of plan.warnings) {
-          lines.push(`warning: ${warning}`);
-        }
-        return lines.join("\\n");
-      }
-
-      function formatResult(result) {
-        return [
-          `applied: ${result.job_id}`,
-          `status: ${result.status}`,
-          `executor: ${result.executor}`,
-          `audit_id: ${result.audit_id}`,
-          `effect: ${result.effect}`,
-          `authority_adapter: ${result.authority_adapter_id || "none"}`,
-          `handoff_path: ${result.handoff_path || "none"}`,
-        ].join("\\n");
-      }
-
-      function rememberPlan(plan) {
-        if (applyPlanPathInput && plan.apply_supported) {
-          applyPlanPathInput.value = plan.plan_path;
-        }
-        statusNode.textContent = formatPlan(plan);
-      }
-
-      function renderAudits(jobs) {
-        if (!auditListNode) {
-          return;
-        }
-        if (!jobs.length) {
-          auditListNode.innerHTML = "<li>当前还没有审计事件。</li>";
-          return;
-        }
-        auditListNode.innerHTML = jobs.slice(0, 10).map((item) => (
-          `<li>${escapeHtml(item.created_at)}: event=${escapeHtml(item.event)} job=${escapeHtml(item.job_kind)} status=${escapeHtml(item.status)} summary=${escapeHtml(item.summary)}</li>`
-        )).join("");
-      }
-
-      async function refreshAudits() {
-        if (!auditListNode) {
-          return;
-        }
-        const response = await fetch("/api/jobs");
-        const body = await response.json();
-        if (!response.ok) {
-          throw new Error(body.detail || "load jobs failed");
-        }
-        renderAudits(body.jobs || []);
-      }
-
-      document.querySelectorAll("[data-copy]").forEach((button) => {
-        button.addEventListener("click", async () => {
-          await copyText(button.dataset.copy);
-        });
-      });
-
-      if (document.getElementById("add-host-form")) {
-        document.getElementById("add-host-form").addEventListener("submit", async (event) => {
-          event.preventDefault();
-          const data = new FormData(event.currentTarget);
-          const payload = {
-            name: data.get("name"),
-            host: data.get("host"),
-            ssh_port: Number(data.get("ssh_port")),
-            base_port: Number(data.get("base_port")),
-            subscription_alias: data.get("subscription_alias"),
-            enabled: data.get("enabled") === "on",
-            include_in_subscription: data.get("include_in_subscription") === "on",
-            infra_core_candidate: data.get("infra_core_candidate") === "on",
-            change_policy: data.get("change_policy"),
-            provider: data.get("provider"),
-            deployment_topology: data.get("deployment_topology"),
-            runtime_service: data.get("runtime_service"),
-          };
-          try {
-            rememberPlan(await createPlan("add_host", payload));
-          } catch (error) {
-            statusNode.textContent = String(error);
-          }
-        });
-      }
-
-      if (document.getElementById("remove-host-form")) {
-        document.getElementById("remove-host-form").addEventListener("submit", async (event) => {
-          event.preventDefault();
-          const data = new FormData(event.currentTarget);
-          try {
-            rememberPlan(await createPlan("remove_host", { name: data.get("name") }));
-          } catch (error) {
-            statusNode.textContent = String(error);
-          }
-        });
-      }
-
-      document.querySelectorAll("[data-remote-kind]").forEach((button) => {
-        button.addEventListener("click", async () => {
-          const hostName = new FormData(document.getElementById("remote-plan-form")).get("name");
-          try {
-            rememberPlan(await createPlan(button.dataset.remoteKind, { name: hostName }));
-          } catch (error) {
-            statusNode.textContent = String(error);
-          }
-        });
-      });
-
-      if (document.getElementById("apply-plan-form")) {
-        document.getElementById("apply-plan-form").addEventListener("submit", async (event) => {
-          event.preventDefault();
-          try {
-            const result = await applyPlan(applyPlanPathInput.value);
-            statusNode.textContent = `${statusNode.textContent}\\n\\n${formatResult(result)}`;
-            await refreshAudits();
-          } catch (error) {
-            statusNode.textContent = String(error);
-          }
-        });
-      }
-    </script>
-"""
+    @app.get("/jobs")
+    def jobs_page(request: Request):
         if not jobs_enabled():
-            script = ""
-            job_section = """
-    <section>
-      <h2>主机登记作业</h2>
-      <p>当前 manifest 没有启用 jobs 配置，所以这个页面只保留只读视图。</p>
-    </section>
-"""
+            raise HTTPException(status_code=404, detail="jobs page is not available for this mode")
+        host_views, subscriptions, providers = load_current_state()
+        audits = load_audits()
+        context = build_jobs_page_context(
+            manifest_name=manifest.name,
+            active_mode=active_mode,
+            host_views=host_views,
+            subscriptions=subscriptions,
+            providers=providers,
+            audits=audits,
+            jobs_enabled=True,
+            worker_quotas_enabled=worker_quotas_enabled(),
+        )
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="jobs_page.html",
+            context={
+                "request": request,
+                **context,
+                "observations_refresh_enabled": observations_refresh_enabled(),
+                "bootstrap_json": json.dumps(
+                    {
+                        "jobs_enabled": True,
+                        "observations_refresh_enabled": observations_refresh_enabled(),
+                        "worker_quotas_enabled": worker_quotas_enabled(),
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        )
 
-        return f"""
-<!doctype html>
-<html lang="zh-CN">
-  <head>
-    <meta charset="utf-8" />
-    <title>proxy-platform web console</title>
-    <style>
-      body {{
-        font-family: "SF Pro Display", "PingFang SC", "Noto Sans SC", sans-serif;
-        margin: 32px;
-        line-height: 1.5;
-      }}
-      section {{
-        margin-bottom: 32px;
-      }}
-      table {{
-        border-collapse: collapse;
-        width: 100%;
-      }}
-      th, td {{
-        border: 1px solid #cbd5e1;
-        padding: 8px 12px;
-        text-align: left;
-      }}
-      form {{
-        display: grid;
-        gap: 8px;
-        margin-bottom: 16px;
-        max-width: 720px;
-      }}
-      label {{
-        display: grid;
-        gap: 4px;
-      }}
-      input, select, button {{
-        font: inherit;
-        padding: 8px 10px;
-      }}
-      .inline {{
-        display: flex;
-        gap: 12px;
-        align-items: center;
-      }}
-      #job-status {{
-        white-space: pre-wrap;
-        padding: 12px;
-        background: #f8fafc;
-        border: 1px solid #cbd5e1;
-      }}
-    </style>
-  </head>
-  <body>
-    <h1>proxy-platform web console</h1>
-    <section>
-      <h2>主机现场清单</h2>
-      <table>
-        <thead>
-          <tr><th>name</th><th>provider</th><th>topology</th><th>observed</th><th>publish</th></tr>
-        </thead>
-        <tbody>{host_rows}</tbody>
-      </table>
-    </section>
-    <section>
-      <h2>订阅入口</h2>
-      <p>{escape(subscriptions['multi_node_url'])}</p>
-      <p>{escape(subscriptions['multi_node_hiddify_import'])}</p>
-      <ul>{subscription_rows}</ul>
-    </section>
-{job_section}
-    <section>
-      <h2>本地 provider 生命周期</h2>
-      <ul>{provider_rows}</ul>
-    </section>
-{script}
-  </body>
-</html>
-"""
+    @app.get("/audit")
+    def audit_page(request: Request):
+        if not jobs_enabled():
+            raise HTTPException(status_code=404, detail="audit page is not available for this mode")
+        host_views, subscriptions, providers = load_current_state()
+        audits = load_audits()
+        context = build_audit_page_context(
+            manifest_name=manifest.name,
+            active_mode=active_mode,
+            host_views=host_views,
+            subscriptions=subscriptions,
+            providers=providers,
+            audits=audits,
+            jobs_enabled=True,
+            worker_quotas_enabled=worker_quotas_enabled(),
+        )
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="audit_page.html",
+            context={
+                "request": request,
+                **context,
+                "observations_refresh_enabled": observations_refresh_enabled(),
+                "bootstrap_json": json.dumps(
+                    {
+                        "jobs_enabled": True,
+                        "observations_refresh_enabled": observations_refresh_enabled(),
+                        "worker_quotas_enabled": worker_quotas_enabled(),
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        )
 
     return app
 
@@ -539,10 +489,20 @@ def run_web_console(
     mode: str | None,
     host: str,
     port: int,
+    basic_auth_username: str | None = None,
+    basic_auth_password: str | None = None,
+    control_plane_read_client: ControlPlaneReadClient | None = None,
 ) -> None:
     import uvicorn
 
-    app = create_app(manifest_path, workspace_root, mode=mode)
+    app = create_app(
+        manifest_path,
+        workspace_root,
+        mode=mode,
+        basic_auth_username=basic_auth_username,
+        basic_auth_password=basic_auth_password,
+        control_plane_read_client=control_plane_read_client,
+    )
     uvicorn.run(app, host=host, port=port)
 
 
@@ -559,5 +519,40 @@ def _serialize_job_apply_result(result) -> dict[str, Any]:
     return payload
 
 
+def _serialize_observation_refresh_result(result: Any) -> dict[str, Any]:
+    if isinstance(result, dict):
+        return result
+    return {
+        "observations_path": str(result.observations_path),
+        "probed_hosts": result.probed_hosts,
+        "healthy_hosts": result.healthy_hosts,
+        "down_hosts": result.down_hosts,
+        "source": result.source,
+    }
+
+
 def _serialize_audit_record(record) -> dict[str, Any]:
     return asdict(record)
+
+
+def _is_basic_auth_authorized(
+    *,
+    authorization_header: str | None,
+    expected_username: str,
+    expected_password: str,
+) -> bool:
+    if not authorization_header:
+        return False
+    scheme, _, encoded = authorization_header.partition(" ")
+    if scheme.lower() != "basic" or not encoded:
+        return False
+    try:
+        decoded = base64.b64decode(encoded).decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError):
+        return False
+    username, separator, password = decoded.partition(":")
+    if not separator:
+        return False
+    return secrets.compare_digest(username, expected_username) and secrets.compare_digest(
+        password, expected_password
+    )

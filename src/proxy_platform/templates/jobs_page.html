@@ -1,0 +1,101 @@
+{% extends "base_console.html" %}
+
+{% block page_content %}
+  <section class="panel panel-wide page-head">
+    <div class="panel-header">
+      <div>
+        <p class="panel-kicker">Jobs</p>
+        <h2>{{ page_heading }}</h2>
+      </div>
+      <p class="panel-note">{{ page_description }}</p>
+    </div>
+  </section>
+
+  <section class="panel panel-wide">
+    <div class="panel-header">
+      <div>
+        <p class="panel-kicker">Execution</p>
+        <h2>变更区</h2>
+      </div>
+      {% if jobs_enabled %}
+      <p class="panel-note">计划成功后会自动带入最近一次可 apply 的 `plan_path`，但你仍然可以人工改写进行复核。</p>
+      {% else %}
+      <p class="panel-note">{{ jobs_empty_message }}</p>
+      {% endif %}
+    </div>
+
+    {% if jobs_enabled %}
+    <div class="jobs-grid">
+      <form id="add-host-form" class="form-card">
+        <h3>新增主机</h3>
+        <label>主机名<input name="name" required /></label>
+        <label>主机地址<input name="host" required /></label>
+        <div class="field-row">
+          <label>SSH 端口<input name="ssh_port" type="number" value="22" required /></label>
+          <label>基准端口<input name="base_port" type="number" value="10000" required /></label>
+        </div>
+        <label>订阅别名<input name="subscription_alias" required /></label>
+        <div class="field-row">
+          <label>provider<input name="provider" required /></label>
+          <label>change_policy
+            <select name="change_policy">
+              <option value="mutable">mutable</option>
+              <option value="frozen">frozen</option>
+            </select>
+          </label>
+        </div>
+        <div class="field-row">
+          <label>deployment_topology
+            <select name="deployment_topology">
+              <option value="standalone_vps">standalone_vps</option>
+              <option value="infra_core_sidecar">infra_core_sidecar</option>
+            </select>
+          </label>
+          <label>runtime_service
+            <select name="runtime_service">
+              <option value="cliproxy-plus">cliproxy-plus</option>
+            </select>
+          </label>
+        </div>
+        <label class="checkbox-line"><input name="enabled" type="checkbox" checked /> enabled</label>
+        <label class="checkbox-line"><input name="include_in_subscription" type="checkbox" checked /> include_in_subscription</label>
+        <label class="checkbox-line"><input name="infra_core_candidate" type="checkbox" checked /> infra_core_candidate</label>
+        <button type="submit" class="primary-button">先生成新增计划</button>
+      </form>
+
+      <form id="remove-host-form" class="form-card">
+        <h3>移除主机</h3>
+        <label>要移除的主机名<input name="name" required /></label>
+        <button type="submit" class="primary-button">先生成移除计划</button>
+      </form>
+
+      <form id="remote-plan-form" class="form-card">
+        <h3>远端移交单</h3>
+        <label>远端移交单主机名<input name="name" required /></label>
+        <div class="button-row">
+          <button type="button" class="primary-button" data-remote-kind="deploy_host">计划部署</button>
+          <button type="button" class="secondary-button" data-remote-kind="decommission_host">计划摘除</button>
+        </div>
+      </form>
+
+      <form id="apply-plan-form" class="form-card">
+        <h3>明确确认后 apply</h3>
+        <label>待 apply 的计划文件路径<input id="apply-plan-path" name="plan_path" required /></label>
+        <p class="form-hint">默认会自动带入最近一次可 apply 的计划。这里保留路径，是为了审计可追溯，而不是要求你手动记路径。</p>
+        <button type="submit" class="danger-button">明确确认后 apply</button>
+      </form>
+    </div>
+
+    <div class="result-grid">
+      <article id="recent-plan-card" class="result-card">
+        <h3>最近计划</h3>
+        <p class="result-empty">这里会显示最近一次作业 plan 结果。远端部署类作业在当前阶段只会生成 authority handoff 移交单，不会由页面直接 SSH 执行。</p>
+      </article>
+      <article id="recent-result-card" class="result-card">
+        <h3>最近执行结果</h3>
+        <p class="result-empty">这里会显示最近一次 apply 的结果、审计编号和 handoff 路径。</p>
+      </article>
+    </div>
+    {% endif %}
+  </section>
+{% endblock %}

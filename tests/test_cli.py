@@ -69,6 +69,30 @@ def test_repos_list_command_includes_required_repo_ids(tmp_path: Path) -> None:
     assert "cliproxy_control_plane" in output
 
 
+def test_repos_list_command_includes_operator_only_runtime_repo(tmp_path: Path) -> None:
+    (tmp_path / "repos").mkdir()
+    stdout = StringIO()
+
+    exit_code = run_cli(
+        [
+            "repos",
+            "list",
+            "--manifest",
+            str(Path(__file__).resolve().parents[1] / "platform.manifest.yaml"),
+            "--workspace-root",
+            str(tmp_path),
+            "--mode",
+            "operator",
+        ],
+        stdout=stdout,
+    )
+
+    output = stdout.getvalue()
+    assert exit_code == 0
+    assert "webchat_openai_runtime" in output
+    assert "role=optional_provider_runtime" in output
+
+
 def test_init_dry_run_command_emits_plan(tmp_path: Path) -> None:
     stdout = StringIO()
 
@@ -413,6 +437,244 @@ commands: {}
     assert "v2ray_url=https://example.com/subscriptions/v2ray_node_lisahost.txt" in output
 
 
+def test_exports_export_public_command_writes_public_snapshot_files(tmp_path: Path) -> None:
+    operator_dir = tmp_path / "operator"
+    observed_dir = tmp_path / "state" / "observed"
+    operator_dir.mkdir(parents=True)
+    observed_dir.mkdir(parents=True)
+    (operator_dir / "nodes.yaml").write_text(
+        """
+nodes:
+  - name: lisahost
+    host: 38.34.8.59
+    ssh_port: 27823
+    base_port: 10000
+    subscription_alias: GG-Lisa-Stable
+    enabled: true
+    include_in_subscription: true
+    infra_core_candidate: true
+    change_policy: frozen
+    provider: Lisahost
+    deployment_topology: standalone_vps
+    runtime_service: cliproxy-plus
+""",
+        encoding="utf-8",
+    )
+    (operator_dir / "subscriptions.yaml").write_text(
+        """
+profile_name: GG Proxy Nodes
+subscription_base_url: https://example.com/subscriptions
+hiddify_fragment_name: GG Proxy Nodes
+remote_profile_name: GG Proxy Nodes Remote
+update_interval_hours: 12
+""",
+        encoding="utf-8",
+    )
+    (observed_dir / "hosts.json").write_text(
+        """
+hosts:
+  - name: lisahost
+    health: healthy
+    source: remote_probe
+    observed_at: 2026-04-14T10:00:00Z
+    detail: podman active
+""",
+        encoding="utf-8",
+    )
+    manifest_path = tmp_path / "platform.manifest.yaml"
+    manifest_path.write_text(
+        """
+platform:
+  name: proxy-platform
+  version: 0.1.0
+  default_mode: public
+  supported_modes: [public, operator]
+repos: []
+state:
+  host_registry:
+    inventory_path: operator/nodes.yaml
+    subscriptions_path: operator/subscriptions.yaml
+    observations_path: state/observed/hosts.json
+    required_modes: [operator]
+commands: {}
+state_sources:
+  - id: host_registry
+    display_name: Host Registry
+    description: operator truth
+    kind: host_registry
+    repo_id: proxy-platform
+    path: operator/nodes.yaml
+    ownership: private_truth
+    required_modes: [operator]
+  - id: subscription_policy
+    display_name: Subscription Policy
+    description: operator truth
+    kind: subscription_policy
+    repo_id: proxy-platform
+    path: operator/subscriptions.yaml
+    ownership: private_truth
+    required_modes: [operator]
+  - id: host_observation
+    display_name: Host Observation
+    description: observed state
+    kind: host_observation
+    repo_id: proxy-platform
+    path: state/observed/hosts.json
+    ownership: platform_observed_state
+    required_modes: [operator]
+""",
+        encoding="utf-8",
+    )
+
+    stdout = StringIO()
+    exit_code = run_cli(
+        [
+            "exports",
+            "export-public",
+            "--manifest",
+            str(manifest_path),
+            "--workspace-root",
+            str(tmp_path),
+            "--output-root",
+            str(tmp_path / "state" / "public"),
+        ],
+        stdout=stdout,
+    )
+
+    output = stdout.getvalue()
+    assert exit_code == 0
+    assert "public state exported" in output
+    assert (tmp_path / "state" / "public" / "host_console.json").exists()
+    assert (tmp_path / "state" / "public" / "subscriptions.json").exists()
+
+
+def test_hosts_and_subscriptions_list_can_use_public_snapshots(tmp_path: Path) -> None:
+    public_dir = tmp_path / "state" / "public"
+    public_dir.mkdir(parents=True)
+    (public_dir / "host_console.json").write_text(
+        """
+{
+  "generated_at": "2026-04-15T00:00:00Z",
+  "hosts": [
+    {
+      "name": "lisahost",
+      "provider": "Lisahost",
+      "deployment_topology": "standalone_vps",
+      "runtime_service": "cliproxy-plus",
+      "observed_health": "healthy",
+      "should_publish": true,
+      "publish_reason": "enabled_in_registry"
+    }
+  ]
+}
+""",
+        encoding="utf-8",
+    )
+    (public_dir / "subscriptions.json").write_text(
+        """
+{
+  "generated_at": "2026-04-15T00:00:00Z",
+  "profile_name": "GG Proxy Nodes",
+  "multi_node_url": "https://example.com/subscriptions/v2ray_nodes.txt",
+  "multi_node_hiddify_import": "hiddify://import/test#GG",
+  "remote_profile_url": "https://example.com/subscriptions/singbox-client-profile.json",
+  "per_node": [
+    {
+      "name": "lisahost",
+      "alias": "GG-Lisa-Stable",
+      "observed_health": "healthy",
+      "v2ray_url": "https://example.com/subscriptions/v2ray_node_lisahost.txt",
+      "hiddify_import_url": "hiddify://import/test#GG-Lisa-Stable"
+    }
+  ]
+}
+""",
+        encoding="utf-8",
+    )
+    manifest_path = tmp_path / "platform.manifest.yaml"
+    manifest_path.write_text(
+        """
+platform:
+  name: proxy-platform
+  version: 0.1.0
+  default_mode: public
+  supported_modes: [public]
+repos: []
+commands: {}
+state_sources:
+  - id: public_host_console_snapshot
+    display_name: Public Host Console Snapshot
+    description: sanitized public host console
+    kind: public_host_console_snapshot
+    repo_id: proxy-platform
+    path: state/public/host_console.json
+    ownership: public_projection
+    required_modes: [public]
+  - id: public_subscription_snapshot
+    display_name: Public Subscription Snapshot
+    description: sanitized public subscriptions
+    kind: public_subscription_snapshot
+    repo_id: proxy-platform
+    path: state/public/subscriptions.json
+    ownership: public_projection
+    required_modes: [public]
+projections:
+  - id: public_host_console
+    display_name: Public Host Console
+    description: public host view
+    kind: public_host_console_projection
+    source_ids: [public_host_console_snapshot]
+    required_modes: [public]
+    rules: {}
+  - id: public_subscription_nodes
+    display_name: Public Subscription View
+    description: public subscription view
+    kind: public_subscription_projection
+    source_ids: [public_subscription_snapshot]
+    required_modes: [public]
+    rules: {}
+""",
+        encoding="utf-8",
+    )
+
+    hosts_stdout = StringIO()
+    subscriptions_stdout = StringIO()
+
+    hosts_exit_code = run_cli(
+        [
+            "hosts",
+            "list",
+            "--manifest",
+            str(manifest_path),
+            "--workspace-root",
+            str(tmp_path),
+            "--mode",
+            "public",
+        ],
+        stdout=hosts_stdout,
+    )
+    subscriptions_exit_code = run_cli(
+        [
+            "subscriptions",
+            "list",
+            "--manifest",
+            str(manifest_path),
+            "--workspace-root",
+            str(tmp_path),
+            "--mode",
+            "public",
+        ],
+        stdout=subscriptions_stdout,
+    )
+
+    assert hosts_exit_code == 0
+    assert "hosts: total=1 publishable=1" in hosts_stdout.getvalue()
+    assert "lisahost" in hosts_stdout.getvalue()
+    assert subscriptions_exit_code == 0
+    assert "multi_node_url=https://example.com/subscriptions/v2ray_nodes.txt" in subscriptions_stdout.getvalue()
+    assert "lisahost" in subscriptions_stdout.getvalue()
+
+
 def test_hosts_list_command_rejects_public_mode_when_registry_is_operator_only(tmp_path: Path) -> None:
     operator_dir = tmp_path / "operator"
     operator_dir.mkdir(parents=True)
@@ -462,7 +724,194 @@ commands: {}
     )
 
     assert exit_code == 2
-    assert "host registry source is not configured for mode public" in stderr.getvalue()
+    assert "public host console snapshot is not configured for mode public" in stderr.getvalue()
+
+
+def test_hosts_list_command_reports_invalid_public_snapshot(tmp_path: Path) -> None:
+    public_dir = tmp_path / "state" / "public"
+    public_dir.mkdir(parents=True, exist_ok=True)
+    (public_dir / "host_console.json").write_text(
+        """
+{
+  "generated_at": "2026-04-15T00:00:00Z",
+  "hosts": [
+    {
+      "name": "lisahost",
+      "provider": "Lisahost",
+      "deployment_topology": "standalone_vps",
+      "runtime_service": "cliproxy-plus",
+      "observed_health": "healthy",
+      "should_publish": "false",
+      "publish_reason": "enabled_in_registry"
+    }
+  ]
+}
+""",
+        encoding="utf-8",
+    )
+    (public_dir / "subscriptions.json").write_text(
+        """
+{
+  "generated_at": "2026-04-15T00:00:00Z",
+  "profile_name": "GG Proxy Nodes",
+  "multi_node_url": "https://example.com/subscriptions/v2ray_nodes.txt",
+  "multi_node_hiddify_import": "hiddify://import/test#GG",
+  "remote_profile_url": "https://example.com/subscriptions/singbox-client-profile.json",
+  "per_node": []
+}
+""",
+        encoding="utf-8",
+    )
+    manifest_path = tmp_path / "platform.manifest.yaml"
+    manifest_path.write_text(
+        """
+platform:
+  name: proxy-platform
+  version: 0.1.0
+  default_mode: public
+  supported_modes: [public]
+repos: []
+commands: {}
+state_sources:
+  - id: public_host_console_snapshot
+    display_name: Public Host Console Snapshot
+    description: sanitized public host console
+    kind: public_host_console_snapshot
+    repo_id: proxy-platform
+    path: state/public/host_console.json
+    ownership: public_projection
+    required_modes: [public]
+  - id: public_subscription_snapshot
+    display_name: Public Subscription Snapshot
+    description: sanitized public subscriptions
+    kind: public_subscription_snapshot
+    repo_id: proxy-platform
+    path: state/public/subscriptions.json
+    ownership: public_projection
+    required_modes: [public]
+projections:
+  - id: public_host_console
+    display_name: Public Host Console
+    description: public host view
+    kind: public_host_console_projection
+    source_ids: [public_host_console_snapshot]
+    required_modes: [public]
+    rules: {}
+  - id: public_subscription_nodes
+    display_name: Public Subscription View
+    description: public subscription view
+    kind: public_subscription_projection
+    source_ids: [public_subscription_snapshot]
+    required_modes: [public]
+    rules: {}
+""",
+        encoding="utf-8",
+    )
+
+    stdout = StringIO()
+    stderr = StringIO()
+    exit_code = run_cli(
+        [
+            "hosts",
+            "list",
+            "--manifest",
+            str(manifest_path),
+            "--workspace-root",
+            str(tmp_path),
+            "--mode",
+            "public",
+        ],
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 2
+    assert "must define a boolean should_publish" in stderr.getvalue()
+
+
+def test_exports_plan_sync_private_prints_changed_files(tmp_path: Path) -> None:
+    runtime_workspace_root = tmp_path / "runtime-workspace"
+    repo_root = tmp_path / "repo-root"
+
+    runtime_inventory = runtime_workspace_root / "repos" / "proxy_ops_private" / "inventory"
+    truth_inventory = repo_root / "repos" / "proxy_ops_private" / "inventory"
+    runtime_inventory.mkdir(parents=True, exist_ok=True)
+    truth_inventory.mkdir(parents=True, exist_ok=True)
+
+    (runtime_inventory / "nodes.yaml").write_text("nodes:\n  - name: lisahost\n", encoding="utf-8")
+    (runtime_inventory / "subscriptions.yaml").write_text("profile_name: runtime\n", encoding="utf-8")
+    (truth_inventory / "nodes.yaml").write_text("nodes:\n  - name: stale\n", encoding="utf-8")
+    (truth_inventory / "subscriptions.yaml").write_text("profile_name: stale\n", encoding="utf-8")
+
+    stdout = StringIO()
+    exit_code = run_cli(
+        [
+            "exports",
+            "plan-sync-private",
+            "--runtime-workspace-root",
+            str(runtime_workspace_root),
+            "--repo-root",
+            str(repo_root),
+        ],
+        stdout=stdout,
+    )
+
+    output = stdout.getvalue()
+    assert exit_code == 0
+    assert "private truth sync planned:" in output
+    assert "repos/proxy_ops_private/inventory/nodes.yaml: update" in output
+    assert "repos/proxy_ops_private/inventory/subscriptions.yaml: update" in output
+
+
+def test_exports_apply_sync_private_updates_repo_files(tmp_path: Path) -> None:
+    runtime_workspace_root = tmp_path / "runtime-workspace"
+    repo_root = tmp_path / "repo-root"
+
+    runtime_inventory = runtime_workspace_root / "repos" / "proxy_ops_private" / "inventory"
+    truth_inventory = repo_root / "repos" / "proxy_ops_private" / "inventory"
+    runtime_inventory.mkdir(parents=True, exist_ok=True)
+    truth_inventory.mkdir(parents=True, exist_ok=True)
+
+    (runtime_inventory / "nodes.yaml").write_text("nodes:\n  - name: lisahost\n", encoding="utf-8")
+    (runtime_inventory / "subscriptions.yaml").write_text("profile_name: runtime\n", encoding="utf-8")
+    (truth_inventory / "nodes.yaml").write_text("nodes:\n  - name: stale\n", encoding="utf-8")
+    (truth_inventory / "subscriptions.yaml").write_text("profile_name: stale\n", encoding="utf-8")
+
+    plan_output = tmp_path / "private-sync-plan.json"
+    plan_exit_code = run_cli(
+        [
+            "exports",
+            "plan-sync-private",
+            "--runtime-workspace-root",
+            str(runtime_workspace_root),
+            "--repo-root",
+            str(repo_root),
+            "--output",
+            str(plan_output),
+        ],
+        stdout=StringIO(),
+    )
+    assert plan_exit_code == 0
+
+    stdout = StringIO()
+    exit_code = run_cli(
+        [
+            "exports",
+            "apply-sync-private",
+            "--plan-file",
+            str(plan_output),
+            "--confirm",
+        ],
+        stdout=stdout,
+    )
+
+    output = stdout.getvalue()
+    assert exit_code == 0
+    assert "private truth sync applied:" in output
+    assert "repos/proxy_ops_private/inventory/nodes.yaml" in output
+    assert "repos/proxy_ops_private/inventory/subscriptions.yaml" in output
+    assert (truth_inventory / "nodes.yaml").read_text(encoding="utf-8") == "nodes:\n  - name: lisahost\n"
+    assert (truth_inventory / "subscriptions.yaml").read_text(encoding="utf-8") == "profile_name: runtime\n"
 
 
 def test_providers_list_command_prints_timeout_and_retry_budgets(tmp_path: Path) -> None:

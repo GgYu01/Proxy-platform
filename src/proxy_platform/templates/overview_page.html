@@ -1,0 +1,100 @@
+{% extends "base_console.html" %}
+
+{% block page_content %}
+  <div class="overview-shell">
+    <div class="overview-main-column">
+      <section class="panel panel-primary-summary">
+        <div class="panel-header">
+          <div>
+            <p class="panel-kicker">Summary</p>
+            <h2>现场摘要</h2>
+          </div>
+          <p class="panel-note">健康数来自最近一次 TCP 探测，不会拿 unknown 充数。</p>
+        </div>
+        <div class="summary-grid overview-summary-grid">
+          {% for card in summary_cards %}
+          <article class="summary-card{% if card.featured %} summary-card-featured{% endif %}" data-tone="{{ card.tone }}">
+            <span class="summary-label">{{ card.label }}</span>
+            <strong class="summary-value">{{ card.value }}</strong>
+            <p class="summary-help">{{ card.help }}</p>
+          </article>
+          {% endfor %}
+        </div>
+      </section>
+
+      <section class="panel panel-host-preview">
+        <div class="panel-header">
+          <div>
+            <p class="panel-kicker">Hosts</p>
+            <h2>重点主机</h2>
+          </div>
+          <p class="panel-note">这里只做快速扫一眼，完整清单请进主机页。</p>
+        </div>
+        <ul class="overview-list host-preview-grid">
+          {% for row in host_preview_rows %}
+          <li class="host-preview-item">
+            <div class="host-preview-main">
+              <div>
+                <strong>{{ row.name }}</strong>
+                <div class="cell-meta">{{ row.provider }} / {{ row.topology_service }}</div>
+              </div>
+              <span class="status-badge" data-health="{{ row.health_tone }}">{{ row.health_label }}</span>
+            </div>
+            <div class="host-preview-foot">
+              <span class="host-preview-pill">{{ row.publish_label }}</span>
+              <div class="cell-meta">{{ row.subscription_alias }}</div>
+            </div>
+          </li>
+          {% endfor %}
+        </ul>
+      </section>
+    </div>
+
+    <div class="overview-side-column">
+      <section class="panel panel-workspace-rail">
+        <div class="panel-header">
+          <div>
+            <p class="panel-kicker">Workspace</p>
+            <h2>{{ workspace_heading }}</h2>
+          </div>
+          <p class="panel-note">{{ workspace_description }}</p>
+        </div>
+        <div class="entry-grid entry-grid-rail">
+        {% for item in action_cards %}
+        <a class="link-card page-link-card" href="{{ item.href }}" data-tone="{{ item.tone }}">
+          <span class="link-label">{{ item.kicker }}</span>
+          <strong>{{ item.title }}</strong>
+          <small>{{ item.description }}</small>
+        </a>
+        {% endfor %}
+      </div>
+      </section>
+
+      <section class="panel panel-audit-preview">
+        <div class="panel-header">
+          <div>
+            <p class="panel-kicker">Audit</p>
+            <h2>最近审计预览</h2>
+          </div>
+          <p class="panel-note">这里只放预览，完整事件请进审计页。</p>
+        </div>
+        <ul class="audit-list">
+          {% if audit_preview_rows %}
+            {% for item in audit_preview_rows %}
+            <li class="audit-item" data-tone="{{ item.tone }}">
+              <div class="audit-topline">
+                <strong>{{ item.job_kind }}</strong>
+                <span class="status-badge" data-health="{{ item.tone }}">{{ item.status }}</span>
+              </div>
+              <div class="cell-meta">{{ item.created_at }} / event={{ item.event }}</div>
+              <div>{{ item.summary }}</div>
+            </li>
+            {% endfor %}
+          {% else %}
+            <li class="audit-item audit-empty">{{ audit_preview_empty_message }}</li>
+          {% endif %}
+        </ul>
+      </section>
+    </div>
+  </div>
+{% endblock %}

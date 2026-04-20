@@ -12,12 +12,12 @@
 
 ### `Proxy_ops_private/generated/standalone/`
 
-这部分本质上是从 `remote_proxy` 公共部署基线派生出来的单机部署包，不是私有现场真相。
+这部分本质上是从 `remote_proxy` 公共部署基线派生出来的单机部署包，里面既可能包含 `sing-box` 资产，也可能包含 `cliproxy-plus` 生命周期入口，不是私有现场真相本体。
 
 代表文件：
 
-- `repos/proxy_ops_private/generated/standalone/akilecloud/install.sh`
-- `repos/proxy_ops_private/generated/standalone/akilecloud/scripts/deploy.sh`
+- `repos/proxy_ops_private/generated/standalone/vmrack1/install.sh`
+- `repos/proxy_ops_private/generated/standalone/vmrack2/install.sh`
 - `repos/proxy_ops_private/generated/standalone/dedirock/install.sh`
 - `repos/proxy_ops_private/generated/standalone/dedirock/scripts/deploy.sh`
 
@@ -26,6 +26,7 @@
 - 不继续把这些文件当源码真相
 - 以 `remote_proxy` 作为公开部署基线
 - 如仍需保留，改成根据私有现场参数渲染的派生产物
+- 即使保留 live apply/check，也只把这里当成“私有参数注入后的 deploy bundle”，不把它再写成第二份公共生命周期源码
 
 ### 订阅入口文档与订阅生成逻辑
 

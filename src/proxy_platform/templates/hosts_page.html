@@ -1,0 +1,59 @@
+{% extends "base_console.html" %}
+
+{% block page_content %}
+  <section class="panel panel-wide">
+    <div class="panel-header panel-header-inline">
+      <div>
+        <p class="panel-kicker">Hosts</p>
+        <h2>{{ page_heading }}</h2>
+      </div>
+      <label class="search-box">
+        <span>快速筛选</span>
+        <input id="host-search" type="search" placeholder="按主机名、provider、拓扑或订阅别名筛选" />
+      </label>
+    </div>
+    <p class="panel-note">{{ page_description }}</p>
+    <div class="table-shell">
+      <table class="host-table">
+        <thead>
+          <tr>
+            <th>主机</th>
+            <th>部署与连接</th>
+            <th>状态</th>
+            <th>订阅</th>
+            <th>观测细节</th>
+          </tr>
+        </thead>
+        <tbody id="host-table-body">
+          {% for row in host_rows %}
+          <tr data-search="{{ row.search_text }}">
+            <td>
+              <strong>{{ row.name }}</strong>
+              <div class="cell-meta">{{ row.provider }}</div>
+            </td>
+            <td>
+              <div>{{ row.topology_service }}</div>
+              <div class="cell-meta">{{ row.endpoint }}</div>
+              {% if row.change_policy %}
+              <div class="cell-meta">change_policy: {{ row.change_policy }}</div>
+              {% endif %}
+            </td>
+            <td>
+              <span class="status-badge" data-health="{{ row.health_tone }}">{{ row.health_label }}</span>
+              <div class="cell-meta">{{ row.publish_label }}</div>
+              <div class="cell-meta">{{ row.publish_reason }}</div>
+            </td>
+            <td>
+              <strong>{{ row.subscription_alias }}</strong>
+            </td>
+            <td>
+              <div>{{ row.observed_at }}</div>
+              <div class="cell-meta">{{ row.observed_detail }}</div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endblock %}

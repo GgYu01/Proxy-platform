@@ -47,6 +47,18 @@ repos:
     default_path: repos/remote_browser
     local_override_path: /workspaces/proxy-platform/repos/remote_browser
 
+  - id: webchat_openai_runtime
+    display_name: webchat-openai-runtime
+    role: optional_provider_runtime
+    required_modes: [operator]
+    optional: true
+    visibility: public
+    # Runtime-local operator workbench: per-account browser login session start/reuse,
+    # state/screenshot/input inspection, and save-back into the account pool.
+    default_url: https://github.com/GgYu01/webchat-openai-runtime.git
+    default_path: repos/webchat-openai-runtime
+    local_override_path: /workspaces/proxy-platform/repos/webchat-openai-runtime
+
 state:
   host_registry:
     inventory_path: repos/proxy_ops_private/inventory/nodes.yaml
@@ -191,6 +203,24 @@ state_sources:
     ownership: platform_observed_state
     required_modes: [public, operator]
 
+  - id: public_host_console_snapshot
+    display_name: Public Host Console Snapshot
+    description: 公开可读的脱敏主机视图快照，只包含展示与订阅所需字段
+    kind: public_host_console_snapshot
+    repo_id: proxy-platform
+    path: state/public/host_console.json
+    ownership: public_projection
+    required_modes: [public]
+
+  - id: public_subscription_snapshot
+    display_name: Public Subscription Snapshot
+    description: 公开可读的脱敏订阅派生快照
+    kind: public_subscription_snapshot
+    repo_id: proxy-platform
+    path: state/public/subscriptions.json
+    ownership: public_projection
+    required_modes: [public]
+
 projections:
   - id: host_console
     display_name: Host Console View
@@ -212,6 +242,24 @@ projections:
       require_registry_enabled: true
       include_unhealthy_observed_hosts: true
       include_observation_only_hosts: false
+
+  - id: public_host_console
+    display_name: Public Host Console View
+    description: public 模式使用的脱敏主机快照视图
+    kind: public_host_console_projection
+    source_ids: [public_host_console_snapshot]
+    required_modes: [public]
+    rules:
+      snapshot_only: true
+
+  - id: public_subscription_nodes
+    display_name: Public Subscription View
+    description: public 模式使用的脱敏订阅快照视图
+    kind: public_subscription_projection
+    source_ids: [public_subscription_snapshot]
+    required_modes: [public]
+    rules:
+      snapshot_only: true
 
 toolchains:
   - id: cliproxy_plus_standalone

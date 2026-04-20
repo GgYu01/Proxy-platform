@@ -2,7 +2,9 @@
 
 统一入口薄平台壳仓库。
 
-一句话说清：`proxy-platform` 现在已经能把远端部署类动作收敛成正式的“移交单”，但它仍然不是直接下发 SSH 的第二控制面，也还没有正式上线的公网 Web 域名。
+一句话说清：`proxy-platform` 现在已经有正式部署的远端 operator Web 入口，但它上线的是“带认证的现场清单与移交单工作台”，不是直接下发 SSH 的第二控制面；这层 Web 继续保持服务端模板壳，不升级成独立 SPA。
+
+新增的 `webchat-openai-runtime` 也按同一原则纳管：它是浏览器会话执行内核和 OpenAI-compatible 运行时，不是新的平台控制面，也不是帐号池、租户、计费和渠道治理层。
 
 它负责：
 
@@ -15,6 +17,7 @@
 它不负责：
 
 - 重写 `CliProxy-control-plane` 的 northbound `/v1` 网关
+- 接管 `cliproxy-control-plane` 的 worker/oauth quota 真相与 probe 执行
 - 保存 `Proxy_ops_private` 的私有真相内容
 - 直接替代 `remote_proxy` 的宿主机部署基线
 
@@ -28,6 +31,14 @@
   私有 inventory / secrets / generated artifacts 真相源
 - `repos/remote_browser`
   可选 provider
+- `repos/webchat-openai-runtime`
+  可选 provider runtime，负责浏览器会话执行和 OpenAI-compatible 协议面
+
+`webchat-openai-runtime` 在这个项目里到底是什么：
+
+- 它是“把网页聊天会话包装成标准 OpenAI API 调用面”的运行时内核。
+- 它解决的是本地 agent、OpenAI SDK、后续 `new-api` / `CLIProxyAPIPlus` 上游如何统一接入网页端 AI chat。
+- 它不负责租户、帐号池运营、计费、RBAC、商业化渠道，也不接管 `CliProxy-control-plane` 的 northbound `/v1`。
 
 ## 第一波交付
 
@@ -42,7 +53,9 @@
   - `init`
   - `sync`
   - `hosts list --mode operator`
+  - `hosts list --mode public`
   - `subscriptions list --mode operator`
+  - `subscriptions list --mode public`
   - `providers list`
   - `web --mode operator`
   - `hosts --registry ... [--observations ...]`
@@ -53,6 +66,9 @@
   - `jobs plan-decommission-host --mode operator --host-name ...`
   - `jobs apply --mode operator --plan-file ... --confirm`
   - `jobs audit-list --mode operator`
+  - `exports export-public`
+  - `exports plan-sync-private`
+  - `exports apply-sync-private`
 
 当前 `init` / `sync` 的执行边界：
 
@@ -139,9 +155,16 @@ python -m proxy_platform jobs audit-list --mode operator
 
 当前模式边界：
 
-- `hosts list` / `subscriptions list` / `web` 读取的是 `Proxy_ops_private` 里的私有登记册，因此当前只在 `operator` 模式开放。
-- `public` 模式当前只保留公开仓库、公开 toolchain 和观测状态插槽，不直接读取私有现场清单。
-- 如果后续需要公开页面或公开订阅入口，必须先引入一份脱敏后的 public projection/state source，而不是让 `public` 模式直接越过 private 边界。
+- `hosts list --mode operator` / `subscriptions list --mode operator` / `web --mode operator` 读取的是 `Proxy_ops_private` 里的私有登记册，因此继续限制在 `operator` 模式。
+- `hosts list --mode public` / `subscriptions list --mode public` 现在已经改成只消费 `state/public/host_console.json` 和 `state/public/subscriptions.json` 这两份脱敏快照，不直接读取私有现场清单。
+- `public` 模式回答的是“公开用户现在能看什么”；`operator` 模式回答的是“平台现场真实登记册现在是什么”。
+
+当前已经补上的两条桥接链路：
+
+- public snapshot 导出
+  先从 `operator` 真相源导出脱敏快照，再让 `public` 模式消费这份快照。
+- private truth reviewed sync
+  先从运行时工作区生成 reviewed plan，再决定要不要把 `.runtime-workspace` 里的登记册副本回写到本地 `repos/proxy_ops_private/inventory/*`。
 
 当前订阅派生规则是：
 
@@ -155,8 +178,12 @@ python -m proxy_platform jobs audit-list --mode operator
 - `docs/adr/ADR-0009-repository-ownership-matrix.md`
 - `docs/adr/ADR-0010-mutation-job-flow-boundary.md`
 - `docs/adr/ADR-0011-authority-handoff-and-operator-deployment.md`
+- `docs/adr/ADR-0012-operator-web-infra-core-deployment.md`
+- `docs/adr/ADR-0013-public-snapshot-and-private-truth-sync.md`
+- `docs/adr/ADR-0014-operator-web-template-shell.md`
 - `docs/repo-boundaries.md`
 - `docs/runbooks/operator-web-console.md`
+- `docs/runbooks/public-state-and-private-sync.md`
 - `docs/runbooks/mutation-jobs.md`
 - `docs/runbooks/authority-handoff.md`
 - `docs/review-checklists/mutation-job-flow.md`
@@ -181,6 +208,7 @@ python -m proxy_platform jobs audit-list --mode operator
     cliproxy-control-plane/
     proxy_ops_private/
     remote_browser/
+    webchat-openai-runtime/
   archive/
     multi_repo_arch_analysis/
 ```
@@ -237,6 +265,39 @@ operator 只读与 mutation 入口示例：
 - 本地 review prerequisite，也就是 `required_paths` / `required_env_files`，仍然满足
 - 如果 handoff 里带了 `downstream_required_paths`，这些会被写进移交单并交给真正执行方复核，而不是由平台壳在本地代验
 
+public 快照与 private truth 回写入口示例：
+
+```bash
+.venv/bin/python -m proxy_platform exports export-public \
+  --manifest ./platform.manifest.yaml \
+  --workspace-root /mnt/hdo/infra-core/modules/proxy-platform-operator/.runtime-workspace \
+  --output-root /mnt/hdo/infra-core/modules/proxy-platform-operator/.runtime-workspace/state/public
+
+.venv/bin/python -m proxy_platform hosts list \
+  --manifest ./platform.manifest.yaml \
+  --workspace-root /mnt/hdo/infra-core/modules/proxy-platform-operator/.runtime-workspace \
+  --mode public
+
+.venv/bin/python -m proxy_platform subscriptions list \
+  --manifest ./platform.manifest.yaml \
+  --workspace-root /mnt/hdo/infra-core/modules/proxy-platform-operator/.runtime-workspace \
+  --mode public
+
+.venv/bin/python -m proxy_platform exports plan-sync-private \
+  --runtime-workspace-root /mnt/hdo/infra-core/modules/proxy-platform-operator/.runtime-workspace \
+  --repo-root /workspaces/proxy-platform
+
+.venv/bin/python -m proxy_platform exports apply-sync-private \
+  --plan-file ./state/private_truth_sync/plans/<sync-plan>.json \
+  --confirm
+```
+
+这组命令的边界是：
+
+- `export-public` 只生成脱敏 public 快照，不会发布密码、主机地址、SSH 端口或 change policy。
+- `plan-sync-private` / `apply-sync-private` 只覆盖 `repos/proxy_ops_private/inventory/nodes.yaml` 和 `subscriptions.yaml`，不碰 secrets、生成产物或 Git 提交。
+- `apply-sync-private` 会校验 source/target digest，避免把运行时副本静默盖掉人工刚改过的私有真相文件。
+
 ## Host Toolchain Profiles
 
 当前 manifest 已声明两类可复用宿主机 profile：
@@ -263,17 +324,71 @@ operator 只读与 mutation 入口示例：
 
 ## 当前 Web 上线状态
 
-当前已经完成的是“本地 operator 控制台”，不是“线上正式站点”。
+一句话结论：operator Web 已经按 `infra-core` 独立模块方式正式部署到 Ubuntu.online，但它上线的是“认证后的 operator 工作台”，不是匿名公网门户。
 
-- 已完成：本地 Web 控制台
-- 已完成：页面内新增/删除主机计划入口
-- 已完成：deploy/decommission authority handoff 入口
-- 已完成：计划、审计、移交单都落到受管目录
-- 未完成：远端正式部署
-- 未完成：公网域名与认证入口
-- 未完成：真正的远端执行器
+当前部署现场：
 
-所以如果你现在问“线上应该访问哪个域名”，当前答案仍然是：没有。当前只支持本地启动后访问 `http://127.0.0.1:8765/`。
+- 远端主机：`gaoyx@112.28.134.53:52117`
+- 模块目录：`/mnt/hdo/infra-core/modules/proxy-platform-operator`
+- 主入口：`https://proxy-platform-operator.svc.prod.lab.gglohh.top:27111/`
+- 健康检查：`https://proxy-platform-operator.svc.prod.lab.gglohh.top:27111/health`
+- 认证方式：HTTP Basic Auth
+- 默认账号名：`admin`
+- 默认密码：`Aa123456`
+- 如后续调整，以远端模块 `.env` 为准
+
+当前运行时布局：
+
+- `/app`
+  固定发布物，也就是当前版本的应用代码和 manifest。
+- `.runtime-seed`
+  首次部署和手工刷新时使用的最小 seed，包括主机登记册、订阅策略和 authority review surface。
+- `.runtime-workspace`
+  真正会被页面读写的运行时工作区。页面里的新增/删除主机、plan、audit、handoff 都落在这里。
+- `.deploy-backups`
+  每次重新注册模块前保存的源码快照，用于人工回退。
+
+为什么要这样拆：
+
+- redeploy 不应该把正在使用的主机登记册和审计记录覆盖掉；
+- 运行时工作区和代码目录分开后，发布版本更新和 operator 现场数据更新就不会互相踩踏。
+
+当前还有三个正式部署约束：
+
+- 认证是 fail-closed。
+  换句话说，正式运行入口如果拿不到用户名或密码，或者密码还是示例值，就直接拒绝启动，而不是降级成匿名站点。只有 `/health` 继续保持免认证，方便探活。
+- redeploy 不覆盖远端 `.env`。
+  模块重发时会保留远端 `.env`，避免把线上密码、域名、端口和镜像策略重置回示例值。
+- authority review surface 会刷新，但 operator 现场数据不会被静默覆盖。
+  具体来说，`repos/remote_proxy` 的脚本、env 模板和部署 runbook 会从 `.runtime-seed` 刷新到 `.runtime-workspace`，避免 handoff 继续引用旧模板；而 `nodes.yaml`、`subscriptions.yaml` 这类现场清单不会被无条件覆盖。
+  当前 redeploy 的正式规则已经细化成两段：
+  - 如果远端 `.runtime-workspace` 里的现场清单仍然等于“上一版 `.runtime-seed` 镜像”，允许自动刷新到这次的新 seed；
+  - 如果远端现场清单已经偏离上一版 seed，说明站点上已经有新的本地编辑，这时必须保留并暴露漂移，不能静默盖掉。
+
+当前已完成：
+
+- 远端带认证的 operator Web
+- `/health` 免认证健康检查
+- 模板化页面壳、轻量静态资源和更适合值守的摘要/搜索/反馈结构
+- 只读接入 `cliproxy-control-plane` 的 worker/oauth quota 视图
+- 页面内新增/删除主机计划入口
+- deploy/decommission authority handoff 入口
+- 计划、审计、移交单都落在受管目录
+- `public` 脱敏快照导出与 `public` 只读消费链路
+- `.runtime-workspace` -> `repos/proxy_ops_private/inventory/*` 的 reviewed sync-back 入口
+- redeploy 时“旧 seed 镜像自动刷新、已漂移现场保留”的现场清单同步
+- `infra-core` 模块注册脚本、固定镜像标签和人工回退备份
+
+当前仍未完成：
+
+- 平台自己代执行远端宿主机部署
+- 匿名公网 public 站点
+- `.runtime-workspace` 变更的自动 Git commit / push / 回退编排
+
+当前网络入口结论：
+
+- 推荐入口是域名 `https://proxy-platform-operator.svc.prod.lab.gglohh.top:27111/`
+- `18082` 直连端口在宿主机内已经可用，但当前外部直连未放通，所以它是“宿主机 fallback”，不是主要公网入口
 
 当前 `CLIProxyAPIPlus` worker 的权责边界如下：
 
@@ -282,17 +397,98 @@ operator 只读与 mutation 入口示例：
 - `remote_proxy`
   负责 `cliproxy-plus` 的真实部署基线、版本切换、Podman/systemd 服务生成以及 usage 备份恢复生命周期。
 
-推荐操作顺序：
+当前 `proxy-platform jobs plan-deploy-host` / `jobs plan-decommission-host` 的作用，是把这类动作先固定成平台可审阅的 plan / audit / authority handoff 入口，不替代下游 authority path。
 
-1. 在本地修改并评审 `remote_proxy` 仓库内的镜像版本、脚本或文档。
-2. 将远端主机上的 `remote_proxy` 工作树同步到该已评审版本。
-3. 在远端主机执行仓库入口命令，而不是手工改 live systemd 文件：
-   - `./scripts/service.sh cliproxy-plus update`
-   - `./scripts/service.sh cliproxy-plus switch-version <image>`
+这件事在当前项目里的准确含义是：
 
-当前 `proxy-platform jobs plan-deploy-host` / `jobs plan-decommission-host` 的作用，是把这类操作先固定成平台可审阅的 plan / audit / authority handoff 入口，不替代上面的 authority path。
+- 页面可以帮你看清“这台主机应该交给哪个 owner、走哪条入口、回退归谁负责”；
+- 页面不会自己 SSH 到 Lisahost、vmrack1、vmrack2 或 dedirock 上执行安装。
 
-当前 Lisahost worker 的真实运行形态是 `systemd + podman`，不是 `docker compose`。OAuth / auth 文件、`config.yaml`、日志目录通过 bind mount 保存在宿主机 `state/cliproxy-plus/` 下；usage 统计则需要依赖 `remote_proxy` 生命周期脚本的导出/导入保护，而不是把 `usage/` 目录误认为实时数据库。
+当前已知主机分类也已经补进私有登记册：
+
+- `lisahost`: `standalone_vps + cliproxy-plus`
+- `vmrack1`: `standalone_vps + cliproxy-plus`
+- `vmrack2`: `standalone_vps + cliproxy-plus`
+- `dedirock`: `standalone_vps + cliproxy-plus`
+
+当前私有 rollout 约束也已经收敛为：
+
+- 四台节点都允许进入 `cliproxy-plus` rollout
+- `dedirock` 是默认首个验证 / canary 节点
+- 正式扩散顺序是 `dedirock -> vmrack1 -> vmrack2 -> lisahost`
+
+这一步是必要的。因为如果登记册不带 `deployment_topology` 和 `runtime_service`，远端站点虽然能展示主机，但不能为现有主机生成 deploy/decommission 计划。
+
+当前 Web 也已经从“一个大页面”拆成了多页面 operator shell：
+
+- `/`: 总览
+- `/hosts`: 主机现场清单
+- `/subscriptions`: 订阅入口
+- `/providers`: 本地 provider 生命周期
+- `/worker-quotas`: 远端 worker / oauth 文件配额
+- `/jobs`: 主机登记作业
+- `/audit`: 作业审计
+
+其中有两条当前使用口径需要特别记住：
+
+- 首页“健康可用”来自最近一次 TCP 最小探测，不会把 `unknown` 当成 `healthy`。
+- `/subscriptions` 会把普通 HTTPS 订阅 URL 和 `hiddify://...` Deep Link 分开表达；前者用于手动填写订阅地址，后者用于拉起 Hiddify 或从剪贴板导入。
+- `/worker-quotas` 只读消费 `cliproxy-control-plane` 的 `/api/accounts/latest-view` 与 `/api/tactical-stats/overview`；如果权威控制面没有返回最新快照，页面会明确显示“无最新配额快照”，而不是在 `proxy-platform` 里伪造 quota 真相。
+
+## 远端部署与维护
+
+首次或重发部署：
+
+```bash
+./deploy/infra-core-module/register_module.sh
+ssh -p 52117 gaoyx@112.28.134.53 'cd /mnt/hdo/infra-core && scripts/modulectl.sh up proxy-platform-operator'
+```
+
+构建默认走 `docker.m.daocloud.io` + 阿里云 PyPI + 阿里云 Debian 镜像；如果镜像站有变更，可以通过 `PYTHON_BASE_IMAGE`、`PIP_INDEX_URL`、`PIP_TRUSTED_HOST`、`APT_MIRROR_URL` 覆盖。
+
+如果你希望把“注册模块 + 拉起服务 + 健康失败时自动回退”收成一个入口，现在可以用：
+
+```bash
+ENABLE_AUTO_ROLLBACK=1 ./deploy/infra-core-module/redeploy_with_rollback.sh
+```
+
+它默认仍然是关闭自动回退的。换句话说，仓库不会在你没明确开启时擅自回切；只有显式给出 `ENABLE_AUTO_ROLLBACK=1`，脚本才会在健康检查失败后尝试恢复上一版镜像和最新备份。
+
+第一次部署如果远端还没有 `.env`，脚本会先生成一份模板，但其中认证密码默认留空。换句话说，第一次真正启动前，必须先把 `.env` 里的认证字段改成真实值。
+
+更新认证口令或域名：
+
+```bash
+ssh -p 52117 gaoyx@112.28.134.53 'vi /mnt/hdo/infra-core/modules/proxy-platform-operator/.env'
+ssh -p 52117 gaoyx@112.28.134.53 'cd /mnt/hdo/infra-core && scripts/modulectl.sh up proxy-platform-operator'
+```
+
+查看远端容器状态：
+
+```bash
+ssh -p 52117 gaoyx@112.28.134.53 'docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep proxy-platform-operator'
+```
+
+查看远端健康检查：
+
+```bash
+curl -k https://proxy-platform-operator.svc.prod.lab.gglohh.top:27111/health
+```
+
+如果模块起不来，先检查认证配置是不是缺项：
+
+```bash
+ssh -p 52117 gaoyx@112.28.134.53 'cd /mnt/hdo/infra-core && scripts/modulectl.sh logs proxy-platform-operator | tail -n 50'
+```
+
+如果 `.env` 里缺少 `PROXY_PLATFORM_OPERATOR_BASIC_AUTH_USERNAME` 或 `PROXY_PLATFORM_OPERATOR_BASIC_AUTH_PASSWORD`，或者密码还是示例值，当前版本会直接拒绝启动。这是故意设计的，目的就是防止“配置丢了一半，站点却裸奔上线”。
+
+人工回退：
+
+1. 在远端模块目录把 `.env` 中的 `PROXY_PLATFORM_OPERATOR_IMAGE` 改回上一版镜像标签，或者恢复 `.deploy-backups/` 里的源码快照。
+2. 回到 `infra-core` 根目录执行 `scripts/modulectl.sh up proxy-platform-operator`。
+
+需要强调的是：这里的回退是“模块发布物回退”，不是“远端代理节点回退”。远端代理节点的生命周期回退 owner 仍然是 `remote_proxy` 或 `infra_core`。
 
 ## 设计原则
 
