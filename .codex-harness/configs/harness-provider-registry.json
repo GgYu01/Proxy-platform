@@ -1,0 +1,242 @@
+{
+  "registry_type": "harness_provider_registry",
+  "version": 1,
+  "providers": [
+    {
+      "id": "codex_sdk",
+      "kind": "executor",
+      "status": "preferred",
+      "authority": "executor",
+      "capabilities": [
+        "requirement_analysis",
+        "architecture_design",
+        "official_python_openai-codex_sdk_adapter",
+        "serial_parallel_dispatch",
+        "sync_goal_state_via_app_server_probe",
+        "produce_patch",
+        "run_tools",
+        "stream_logs",
+        "write_receipts"
+      ],
+      "blocked_on": [],
+      "verification_policy": "use_official_python_openai_codex_sdk_only_with_local_probe",
+      "family": "codex",
+      "selection_aliases": [
+        "codex_sdk"
+      ]
+    },
+    {
+      "id": "codex_cli",
+      "kind": "executor",
+      "status": "available",
+      "authority": "executor",
+      "capabilities": [
+        "produce_patch",
+        "run_tools",
+        "stream_logs",
+        "write_receipts"
+      ],
+      "blocked_on": [],
+      "verification_policy": "local_dispatch_receipt_required",
+      "family": "codex",
+      "selection_aliases": [
+        "codex_cli"
+      ]
+    },
+    {
+      "id": "chatgpt_web_manual",
+      "kind": "assist_channel",
+      "status": "available",
+      "authority": "candidate_artifact_only",
+      "capabilities": [
+        "analyze_uploaded_context",
+        "draft_design",
+        "draft_execution_plan",
+        "draft_patch",
+        "draft_report",
+        "draft_testing_guide"
+      ],
+      "blocked_on": [],
+      "verification_policy": "local_supervisor_receipt_required",
+      "family": "chatgpt",
+      "selection_aliases": [
+        "chatgpt_web"
+      ],
+      "model_policy": {
+        "selection_owner": "human_operator_in_chatgpt_web_ui",
+        "selection_strategy": "highest_visible_available",
+        "reasoning_effort_rank": [
+          "fast",
+          "standard",
+          "advanced",
+          "deep",
+          "extended"
+        ],
+        "default_model_key": "gpt55_thinking",
+        "gpt55_pro_extended_required_stages": [
+          "requirements_analysis",
+          "architecture_design",
+          "complex_debug_root_cause",
+          "rework_decision",
+          "final_evaluation_summary"
+        ],
+        "models": [
+          {
+            "model_key": "gpt55_thinking",
+            "model": "GPT-5.5 Thinking",
+            "required_reasoning_effort": "deep",
+            "required_reasoning_effort_ui_label": "深入",
+            "available_reasoning_efforts": [
+              "fast",
+              "standard",
+              "advanced",
+              "deep"
+            ],
+            "fallback_reasoning_efforts": [
+              "advanced",
+              "standard",
+              "fast"
+            ]
+          },
+          {
+            "model_key": "gpt55_pro",
+            "model": "GPT-5.5 Pro",
+            "required_reasoning_effort": "extended",
+            "required_reasoning_effort_ui_label": "Extended",
+            "available_reasoning_efforts": [
+              "standard",
+              "advanced",
+              "extended"
+            ],
+            "fallback_reasoning_efforts": []
+          }
+        ],
+        "availability_probe_required": true,
+        "fallback_detection_policy": "try_required_first_then_detect_available_ui_options",
+        "source": "Current harness policy on 2026-06-06: GPT-5.5 Thinking defaults to the highest visible deep effort; GPT-5.5 Pro Extended is mandatory for critical analysis stages and must be backed by a current ChatGPT Web UI probe receipt. If Extended is not visible, the stage is blocked with no downgrade.",
+        "ui_probe_receipt_policy": {
+          "evidence_source": "current_chatgpt_web_ui",
+          "missing_required_evidence": "write_blocked_receipt_no_downgrade",
+          "allowed_record_fields": [
+            "observed_at",
+            "selected_model_label",
+            "available_model_labels",
+            "selected_reasoning_effort_label",
+            "available_reasoning_effort_labels",
+            "available_reasoning_efforts",
+            "subscription_plan_label",
+            "blocked_reason"
+          ],
+          "forbidden_record_fields": [
+            "account_email",
+            "account_id",
+            "billing_id",
+            "cookies",
+            "session",
+            "localStorage",
+            "oauth_token",
+            "conversation_url",
+            "share_url"
+          ]
+        }
+      }
+    },
+    {
+      "id": "chatgpt_app_no_api",
+      "kind": "assist_channel",
+      "status": "available",
+      "authority": "candidate_artifact_only",
+      "capabilities": [
+        "submit_candidate_artifacts",
+        "read_supervisor_receipts"
+      ],
+      "blocked_on": [],
+      "verification_policy": "connector_must_not_run_shell_codex_git_deploy_or_model_api",
+      "family": "chatgpt",
+      "selection_aliases": [
+        "chatgpt_app"
+      ]
+    },
+    {
+      "id": "cursor_sdk",
+      "kind": "future_executor",
+      "status": "blocked",
+      "authority": "executor",
+      "capabilities": [
+        "produce_patch",
+        "run_agent"
+      ],
+      "blocked_on": [
+        "real_cursor_authentication"
+      ],
+      "verification_policy": "must_authenticate_with_real_cursor_account",
+      "family": "cursor",
+      "selection_aliases": [
+        "cursor_sdk"
+      ]
+    },
+    {
+      "id": "cursor_cli",
+      "kind": "future_executor",
+      "status": "blocked",
+      "authority": "executor",
+      "capabilities": [
+        "produce_patch",
+        "run_agent"
+      ],
+      "blocked_on": [
+        "real_cursor_authentication"
+      ],
+      "verification_policy": "must_authenticate_with_real_cursor_account",
+      "family": "cursor",
+      "selection_aliases": [
+        "cursor_cli"
+      ]
+    },
+    {
+      "id": "antigravity_manual_assist",
+      "family": "antigravity",
+      "selection_aliases": [
+        "antigravity_manual"
+      ],
+      "kind": "assist_channel",
+      "status": "available",
+      "authority": "candidate_artifact_only",
+      "capabilities": [
+        "analyze_uploaded_context",
+        "draft_design",
+        "draft_execution_plan",
+        "draft_patch",
+        "draft_report",
+        "draft_testing_guide"
+      ],
+      "blocked_on": [],
+      "verification_policy": "local_supervisor_receipt_required"
+    },
+    {
+      "id": "antigravity_agent",
+      "family": "antigravity",
+      "selection_aliases": [
+        "antigravity_agent"
+      ],
+      "kind": "future_executor",
+      "status": "blocked",
+      "authority": "executor",
+      "capabilities": [
+        "produce_patch",
+        "run_agent"
+      ],
+      "blocked_on": [
+        "real_antigravity_authentication",
+        "verified_antigravity_execution_receipt"
+      ],
+      "verification_policy": "must_authenticate_with_real_antigravity_account"
+    }
+  ],
+  "family_defaults": {
+    "codex": "codex_sdk",
+    "chatgpt": "chatgpt_web_manual",
+    "cursor": "cursor_sdk",
+    "antigravity": "antigravity_manual_assist"
+  }
+}

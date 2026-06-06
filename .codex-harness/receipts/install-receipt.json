@@ -1,0 +1,11 @@
+{
+  "asset_count": 38,
+  "install_root": ".codex-harness",
+  "installed_at": "2026-06-07T00:26:38+08:00",
+  "package_id": "codex_project_harness",
+  "package_path": "C:\\Users\\Administration\\CodexWorkspaces\\harness_agent_approve\\dist\\codex-project-harness.zip",
+  "package_sha256": "374d0614716251911764a3ae4894c4eed272708b67e92e7234556a5249cf9e9d",
+  "package_version": 1,
+  "status": "installed",
+  "target_root": "C:\\Users\\Administration\\CodexWorkspaces\\proxy-platform"
+}

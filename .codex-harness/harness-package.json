@@ -1,0 +1,206 @@
+{
+  "asset_count": 38,
+  "assets": [
+    {
+      "generated": true,
+      "path": "AGENTS.md",
+      "sha256": "b78d3f42e3be19f78e0ffe2aa60329151759b5efe14511e80fbca9a7997486a8",
+      "size_bytes": 1684
+    },
+    {
+      "path": "configs/harness-provider-registry.json",
+      "sha256": "e933c20d1ad7e452ae754bc27ebf4187a5f7c5b4b0ce5111d367e2774534f4c2",
+      "size_bytes": 7278
+    },
+    {
+      "path": "configs/harness-evaluation-registry.json",
+      "sha256": "b53f25d7145348a7a9b7883b6d50c8a5d7daa2f1cd9e2a490059cff930017e0e",
+      "size_bytes": 38605
+    },
+    {
+      "path": "docs/chatgpt-app-no-api-supervised-workflow.md",
+      "sha256": "09128494df710b3afe65c6eb8548c8f490b400177db57299ca67a04ecbc40304",
+      "size_bytes": 30794
+    },
+    {
+      "path": "docs/chatgpt-web-manual-assist-workflow.md",
+      "sha256": "c0a10cb6c4c5f26e86df452cf6340d3ffb699d45c7fd684256a6fb6feaacb1ce",
+      "size_bytes": 23677
+    },
+    {
+      "path": "docs/chatgpt-web-project-conversation-demo.md",
+      "sha256": "cddc1616026365a7a6420233c79196fdcbfbe0e6a04bd91495c6c55425b94b15",
+      "size_bytes": 15887
+    },
+    {
+      "path": "docs/chatgpt-web-workload-and-entry-design.md",
+      "sha256": "b3afbd0fab3b82a0a89928992c71f4291e2b8337a706f3ac491f4b2140e1b716",
+      "size_bytes": 30732
+    },
+    {
+      "path": "docs/codex-led-harness-architecture.md",
+      "sha256": "9fb951313ac217911665f56f17f454af529a7db3ac384ea7929302af30597f87",
+      "size_bytes": 9001
+    },
+    {
+      "path": "docs/codex-led-harness-open-source-ecosystem-research-2026-06-02.md",
+      "sha256": "ce2bec5f62f14bca979ba8c8afbc7baf4a9b7d0d99aac171581ba785dce9e06c",
+      "size_bytes": 28159
+    },
+    {
+      "path": "docs/codex-sdk-language-decision.md",
+      "sha256": "18e1b832aeb4201e0315c120ebd5a5f574c21a7dc117a5fc42b32935d61862a1",
+      "size_bytes": 4225
+    },
+    {
+      "path": "docs/codex_tooling_inventory.md",
+      "sha256": "5e1a6f7eaf539ae76e19023c372b9ca5900b11e0f73cc817680c0d088e9713c0",
+      "size_bytes": 8035
+    },
+    {
+      "path": "docs/executor-materialization-profile.md",
+      "sha256": "475c3f0b286c3afc29a5ed00e17eef198d815f9476023330b10ddf97b2093c64",
+      "size_bytes": 4453
+    },
+    {
+      "path": "docs/executor-run-contract.md",
+      "sha256": "75be186f0a8644eb384e8d744c94860ac23c8e8707a0ee8cd54d0650510649f6",
+      "size_bytes": 8366
+    },
+    {
+      "path": "docs/harness-evaluation-standards-2026-06-02.md",
+      "sha256": "a19651d678df31ec722d120e4399ce3fd55af7179cb22c614899b8e8303da86d",
+      "size_bytes": 10095
+    },
+    {
+      "path": "docs/project-local-harness-installation.md",
+      "sha256": "4da7d502f055ecf5489b05321ff6d4af9727b14c350258bd943c7e11d76fb194",
+      "size_bytes": 4561
+    },
+    {
+      "path": "docs/project-capability-profile.md",
+      "sha256": "c24d7412ed6b01ddbd8b5f0ff6e3d5a9f139ad958cccf75d2c4ff7e9af55b6fe",
+      "size_bytes": 6518
+    },
+    {
+      "path": "docs/protocol-boundaries.md",
+      "sha256": "d22d1e92d12e4998cfb14b4cc5426123c1bcd6945d03e16c6244b9fdd2146c49",
+      "size_bytes": 10808
+    },
+    {
+      "path": "prompt_groups/codex_harness/README.md",
+      "sha256": "ecdb881fa040938d7e93deeb973e070fc87649821c7be15e011029c921192726",
+      "size_bytes": 3631
+    },
+    {
+      "path": "prompt_groups/codex_harness/chatgpt_web_manual_assist.md",
+      "sha256": "f494815ee17145c66a88b1aa17bf050c6e3c92c24951b64225408691a922c01b",
+      "size_bytes": 5610
+    },
+    {
+      "path": "prompt_groups/codex_harness/codex_executor.md",
+      "sha256": "194ddc0f7f2d605c84cc66dea9fe1315d802e7587e7691bfc4231a8bfa046ed9",
+      "size_bytes": 6011
+    },
+    {
+      "path": "prompt_groups/codex_harness/task_payload_template.md",
+      "sha256": "eb86c7bdf3052210514fe9379ab65891a7ca3bfbdd768edec57b4b6efc3c8787",
+      "size_bytes": 3189
+    },
+    {
+      "path": "schemas/executor_run_contract.schema.json",
+      "sha256": "8cf95ddd13571e26bc1750d77eb64b695ff4a8bcdb199a4d4de098eec090c1af",
+      "size_bytes": 24350
+    },
+    {
+      "path": "tools/chatgpt_app_no_api_common.py",
+      "sha256": "aaf4e869e299dd6ca70895813dd2289d45cc8dabb32f6bfa3a19fe14db93799f",
+      "size_bytes": 41295
+    },
+    {
+      "path": "tools/chatgpt_app_no_api_connector.py",
+      "sha256": "699a60e31cc2f685f42a3a9037785d7d58abe570aa9a0b794b0ca216fc27b44b",
+      "size_bytes": 13410
+    },
+    {
+      "path": "tools/chatgpt_app_proxy.py",
+      "sha256": "8694eedce7e39a11706f095f6b7bdca9795fb073b258e84488bb69479c0979fe",
+      "size_bytes": 4091
+    },
+    {
+      "path": "tools/chatgpt_app_supervisor.py",
+      "sha256": "941c2bd7126353393e87ad7754d0863db33412a30603f11f4f452685bb1b8055",
+      "size_bytes": 5904
+    },
+    {
+      "path": "tools/chatgpt_web_artifact_importer.py",
+      "sha256": "66ea23c6a7ac95a2b62735786c88b50ff540a2f539aabce191b5d69a75b34d0f",
+      "size_bytes": 33415
+    },
+    {
+      "path": "tools/chatgpt_web_execution_dispatcher.py",
+      "sha256": "c9504be878d76395614a366d95fefe6e015b11ac22129301c374081bbb1dd0fc",
+      "size_bytes": 34202
+    },
+    {
+      "path": "tools/chatgpt_web_harness.py",
+      "sha256": "a5500cbdc8c61d420aaaf91f45a53044e2b602307a898f3eefa487fc9ee48402",
+      "size_bytes": 58818
+    },
+    {
+      "path": "tools/chatgpt_web_project_conversation_demo.py",
+      "sha256": "a9de2858d9ead26cc44570cbaf5b36ebba8afb4863934a01809e4240ac6966b3",
+      "size_bytes": 27759
+    },
+    {
+      "path": "tools/chatgpt_web_simprint_bridge.py",
+      "sha256": "2edd8f17375470d9500a9232e7ff66c54c2b8a98749dc5888525932f0b8210e4",
+      "size_bytes": 36661
+    },
+    {
+      "path": "tools/package_harness.py",
+      "sha256": "1c5cef2c9174b4b2a9dac07dd1e095db5c60ac3f46f42bcd4f05e34ce0c51e30",
+      "size_bytes": 26148
+    },
+    {
+      "path": "tools/probe_codex_sdk_capabilities.py",
+      "sha256": "2c32a993e61a2b003f86158e1a78b29e416c61c2b92328952517f2a03939195c",
+      "size_bytes": 15428
+    },
+    {
+      "path": "tools/validate_chatgpt_web_manual_assist.py",
+      "sha256": "89baa54eb4e13a360ee1c99d1d88f70191e5ff8344f207a00481591a7d347491",
+      "size_bytes": 53944
+    },
+    {
+      "path": "tools/validate_executor_contract.py",
+      "sha256": "64231dea02e722a51273d1cbf43b5b3301575e6b70f2c057e1a9c5abe7e58ef8",
+      "size_bytes": 31205
+    },
+    {
+      "path": "tools/validate_harness_alignment.py",
+      "sha256": "d289e147d029a16a6532743a8ab49a4a59f31f2a9164a4fb7405c71352ea7727",
+      "size_bytes": 7621
+    },
+    {
+      "path": "tools/validate_harness_evaluation_registry.py",
+      "sha256": "d9a557fb6f89be013f2497e621cd6a0b4bfedb09df81a19f12ed8007d7274810",
+      "size_bytes": 6134
+    },
+    {
+      "path": "tools/validate_harness_provider_registry.py",
+      "sha256": "b0b0747c10fbdc37ea61f2e070b20886c3a27c78427527f8a3cdf23484325cb6",
+      "size_bytes": 14859
+    }
+  ],
+  "created_at": "2026-06-07T00:25:54+08:00",
+  "install_root": ".codex-harness",
+  "package_id": "codex_project_harness",
+  "package_version": 1,
+  "policy": {
+    "delivery_authority": "local_codex_supervisor",
+    "project_local_only": true,
+    "writes_global_codex_config": false
+  },
+  "source_root_name": "harness_agent_approve"
+}

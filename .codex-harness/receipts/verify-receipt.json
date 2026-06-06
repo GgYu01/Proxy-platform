@@ -1,0 +1,55 @@
+{
+  "checks": [
+    {
+      "asset_count": 38,
+      "name": "asset_hashes",
+      "status": "passed"
+    },
+    {
+      "name": "project_agents_entry",
+      "status": "passed"
+    },
+    {
+      "command": [
+        "C:\\Users\\Administration\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\python\\python.exe",
+        "tools/validate_harness_provider_registry.py",
+        "configs/harness-provider-registry.json"
+      ],
+      "exit_code": 0,
+      "name": "validate_harness_provider_registry.py",
+      "status": "passed",
+      "stderr_tail": "",
+      "stdout_tail": "valid: harness_provider_registry providers=8\n"
+    },
+    {
+      "command": [
+        "C:\\Users\\Administration\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\python\\python.exe",
+        "tools/validate_harness_evaluation_registry.py",
+        "configs/harness-evaluation-registry.json"
+      ],
+      "exit_code": 0,
+      "name": "validate_harness_evaluation_registry.py",
+      "status": "passed",
+      "stderr_tail": "",
+      "stdout_tail": "valid: harness_evaluation_registry benchmarks=76 adopt_now=6 adopt_next=26 watch=44 defer=0 categories=23\n"
+    },
+    {
+      "command": [
+        "C:\\Users\\Administration\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\python\\python.exe",
+        "tools/validate_harness_alignment.py",
+        "."
+      ],
+      "exit_code": 0,
+      "name": "validate_harness_alignment.py",
+      "status": "passed",
+      "stderr_tail": "",
+      "stdout_tail": "valid: harness_alignment\n"
+    }
+  ],
+  "install_root": ".codex-harness",
+  "package_id": "codex_project_harness",
+  "package_version": 1,
+  "status": "passed",
+  "target_root": "C:\\Users\\Administration\\CodexWorkspaces\\proxy-platform",
+  "verified_at": "2026-06-07T00:26:59+08:00"
+}
