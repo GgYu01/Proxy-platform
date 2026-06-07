@@ -22,10 +22,13 @@ def _write_remote_proxy_authority_surface(tmp_path: Path) -> None:
     (remote_proxy_root / "config").mkdir(parents=True, exist_ok=True)
     (remote_proxy_root / "docs" / "deploy").mkdir(parents=True, exist_ok=True)
     (remote_proxy_root / "scripts" / "service.sh").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    (remote_proxy_root / "scripts" / "cliproxy_api_standalone_rollout.sh").write_text(
+        "#!/bin/sh\nexit 0\n",
+        encoding="utf-8",
+    )
     (remote_proxy_root / "config" / "cliproxy-plus.env").write_text(
         "CLIPROXY_IMAGE=test\n"
         "CLIPROXY_PORT=10000\n"
-        "CLIPROXY_MEMORY_LIMIT=512m\n"
         "CLIPROXY_MANAGEMENT_KEY=test-management\n"
         "CLIPROXY_MANAGEMENT_ALLOW_REMOTE=true\n"
         "CLIPROXY_API_KEY=test-api\n"
@@ -148,7 +151,6 @@ authority_adapters:
     required_env_keys:
       - CLIPROXY_IMAGE
       - CLIPROXY_PORT
-      - CLIPROXY_MEMORY_LIMIT
       - CLIPROXY_MANAGEMENT_KEY
       - CLIPROXY_MANAGEMENT_ALLOW_REMOTE
       - CLIPROXY_API_KEY
@@ -178,29 +180,6 @@ authority_adapters:
     rollback_hint: Re-run reviewed install after remote cleanup if rollback is needed.
     notes:
       - remote_proxy does not expose a shared decommission command yet
-  - id: remote_proxy_cliproxy_plus_infra_core_sidecar
-    display_name: remote_proxy infra-core sidecar handoff
-    owner_repo_id: remote_proxy
-    required_modes: [operator]
-    job_kinds: [deploy_host, decommission_host]
-    topology: infra_core_sidecar
-    runtime_service: cliproxy-plus
-    handoff_method: runbook_only
-    entrypoint: repos/remote_proxy/docs/deploy/infra-core-ubuntu-online.md
-    actions:
-      deploy_host: review_sidecar_deploy
-      decommission_host: review_sidecar_decommission
-    required_paths:
-      - repos/remote_proxy
-    downstream_required_paths:
-      - /mnt/hdo/infra-core
-    required_env_files: []
-    required_env_keys: []
-    rollback_owner: infra_core
-    rollback_hint: Use infra-core compose rollback after owner review.
-    notes:
-      - do not run remote_proxy install.sh inside /mnt/hdo/infra-core
-      - actual compose lifecycle remains owned by infra-core
 commands: {}
 """,
         encoding="utf-8",
@@ -422,43 +401,6 @@ def test_decommission_job_apply_creates_runbook_only_authority_handoff_artifact(
     assert handoff_payload["adapter"]["handoff_method"] == "runbook_only"
     assert handoff_payload["adapter"]["action"] == "manual_service_removal"
     assert handoff_payload["recommended_command"] is None
-
-
-def test_sidecar_authority_handoff_records_downstream_paths_without_local_mount(tmp_path: Path) -> None:
-    manifest_path = _write_fixture(tmp_path)
-    inventory_path = tmp_path / "operator" / "nodes.yaml"
-    inventory_payload = yaml.safe_load(inventory_path.read_text(encoding="utf-8"))
-    inventory_payload["nodes"][0]["deployment_topology"] = "infra_core_sidecar"
-    inventory_payload["nodes"][0]["runtime_service"] = "cliproxy-plus"
-    inventory_path.write_text(yaml.safe_dump(inventory_payload, sort_keys=False, allow_unicode=True), encoding="utf-8")
-
-    manifest = load_manifest(manifest_path)
-    plan = plan_job(
-        manifest=manifest,
-        workspace_root=tmp_path,
-        mode="operator",
-        job_kind="deploy_host",
-        requested_by="pytest",
-        payload={"name": "lisahost"},
-    )
-
-    assert plan.authority_adapter_id == "remote_proxy_cliproxy_plus_infra_core_sidecar"
-    assert any("record downstream execution paths" in step for step in plan.preview_steps)
-
-    result = apply_job_plan(
-        manifest=manifest,
-        workspace_root=tmp_path,
-        mode="operator",
-        plan=plan,
-        requested_by="pytest",
-        confirm=True,
-    )
-
-    assert result.status == "applied"
-    handoff_payload = yaml.safe_load(result.handoff_path.read_text(encoding="utf-8"))
-    assert handoff_payload["required_paths"] == ["repos/remote_proxy"]
-    assert handoff_payload["downstream_required_paths"] == ["/mnt/hdo/infra-core"]
-    assert any("verify downstream execution paths exist" in step for step in handoff_payload["review_steps"])
 
 
 def test_apply_rejects_authority_handoff_when_contract_changes_after_planning(tmp_path: Path) -> None:

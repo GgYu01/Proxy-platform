@@ -17,7 +17,7 @@
 它不负责：
 
 - 重写 `CliProxy-control-plane` 的 northbound `/v1` 网关
-- 接管 `cliproxy-control-plane` 的 worker/oauth quota 真相与 probe 执行
+- 接管 `cliproxy-control-plane` 的远端 worker 连接真相、余额真相与 probe 执行
 - 保存 `Proxy_ops_private` 的私有真相内容
 - 直接替代 `remote_proxy` 的宿主机部署基线
 
@@ -66,6 +66,7 @@
   - `jobs plan-decommission-host --mode operator --host-name ...`
   - `jobs apply --mode operator --plan-file ... --confirm`
   - `jobs audit-list --mode operator`
+  - `deploy-harness plan --scenario cliproxyapi_usagekeeper_standalone --target-host ... --phase ... --env-ref CLIPROXY_MANAGEMENT_KEY=env:CLIPROXY_MANAGEMENT_KEY --env-ref CLIPROXY_API_KEY=env:CLIPROXY_API_KEY --env-ref CPA_MANAGEMENT_KEY=env:CPA_MANAGEMENT_KEY --env-ref LOGIN_PASSWORD=env:CPA_USAGE_KEEPER_LOGIN_PASSWORD --output ...`
   - `exports export-public`
   - `exports plan-sync-private`
   - `exports apply-sync-private`
@@ -137,11 +138,11 @@ python -m proxy_platform jobs audit-list --mode operator
 当前 authority handoff 已经固化了三类下游路径：
 
 - `remote_proxy_cliproxy_plus_standalone`
-  适用于 `standalone_vps`，会把 `deploy_host` 移交到 `repos/remote_proxy/scripts/service.sh cliproxy-plus install` 这条生命周期入口。
+  适用于 `standalone_vps`，会把 `deploy_host` 移交到 `repos/remote_proxy/scripts/cliproxy_api_standalone_rollout.sh cliproxy-plus install-combo` 这条生命周期入口。
 - `remote_proxy_cliproxy_plus_standalone_decommission`
   适用于 `standalone_vps`，但因为下游还没有统一的 decommission 脚本，所以当前只生成 runbook 型移交单。
-- `remote_proxy_cliproxy_plus_infra_core_sidecar`
-  适用于 `infra_core_sidecar`。本地 `apply` 只要求能审阅 `repos/remote_proxy/docs/deploy/infra-core-ubuntu-online.md` 这条移交面；真正执行前必须由 downstream owner 再确认 `/mnt/hdo/infra-core` 这类执行现场前提，而不是把它误当成本地 apply 阻塞项。
+
+原 `infra_core_sidecar` / `/mnt/hdo/infra-core` 路径已随 `112.28.134.53` 主机退役而移除，见 [ADR-0020](docs/adr/ADR-0020-sea-bgp-temporary-subscription-host.md)。订阅临时宿主为 LisaHost SEA BGP（`:18080`）。
 
 当前 plan 文件只接受位于 `state/jobs/plans/` 这块受管目录下的已审计划。`apply` 时还会校验：
 
@@ -181,8 +182,11 @@ python -m proxy_platform jobs audit-list --mode operator
 - `docs/adr/ADR-0012-operator-web-infra-core-deployment.md`
 - `docs/adr/ADR-0013-public-snapshot-and-private-truth-sync.md`
 - `docs/adr/ADR-0014-operator-web-template-shell.md`
+- `docs/adr/ADR-0019-codex-responses-http-sse-compat-adapter.md`
 - `docs/repo-boundaries.md`
 - `docs/runbooks/operator-web-console.md`
+- `docs/runbooks/proxy-subscription-client-deployment-requirements.md`
+- `docs/runbooks/codex-responses-chain-diagnostics.md`
 - `docs/runbooks/public-state-and-private-sync.md`
 - `docs/runbooks/mutation-jobs.md`
 - `docs/runbooks/authority-handoff.md`
@@ -328,12 +332,19 @@ public 快照与 private truth 回写入口示例：
 
 当前部署现场：
 
-- 远端主机：`gaoyx@112.28.134.53:52117`
+- 远端主机：由私有 inventory、当前 handoff 记录或部署时 `REMOTE_HOST` / `REMOTE_PORT` 显式提供；旧机器 `112.28.134.53` 已不可用，不能作为默认目标。
 - 模块目录：`/mnt/hdo/infra-core/modules/proxy-platform-operator`
 - 主入口：`https://proxy-platform-operator.svc.prod.lab.gglohh.top:27111/`
+- Full Flow Trigger Gateway 推荐入口：`https://full-flow-trigger.svc.prod.lab.gglohh.top:27111/`
+- Full Flow Trigger Gateway 兼容路径：`https://proxy-platform-operator.svc.prod.lab.gglohh.top:27111/full-flow-trigger/`
 - 健康检查：`https://proxy-platform-operator.svc.prod.lab.gglohh.top:27111/health`
-- 认证方式：HTTP Basic Auth
+- 认证方式：operator 主入口使用 HTTP Basic Auth；Full Flow Trigger Gateway 推荐入口和兼容路径不要求网页登录
 - 账号凭据：只以远端模块 `.env` 为准，不在仓库文档中保存实际密码
+
+`full-flow-trigger.svc.prod.lab.gglohh.top` 与 `/full-flow-trigger/` 兼容路径
+都是 `jenkins-ci-full-release-flow` 拥有的 Full Flow 动态触发前端和
+Gateway。`proxy-platform` 只负责把它接入现有 `infra_gateway_net`、Traefik
+`27111` 入口和 TLS store，不拥有 Jenkins 参数合同或 Gateway 业务逻辑。
 
 当前运行时布局：
 
@@ -367,8 +378,10 @@ public 快照与 private truth 回写入口示例：
 
 - 远端带认证的 operator Web
 - `/health` 免认证健康检查
+- `/full-flow-trigger/healthz` 免认证 Gateway 健康检查
+- `full-flow-trigger.svc.prod.lab.gglohh.top:27111` 独立域名路由，复用现有 Traefik 和证书存储
 - 模板化页面壳、轻量静态资源和更适合值守的摘要/搜索/反馈结构
-- 只读接入 `cliproxy-control-plane` 的 worker/oauth quota 视图
+- 只读接入 `cliproxy-control-plane` 的远端连接与余额面板
 - 页面内新增/删除主机计划入口
 - deploy/decommission authority handoff 入口
 - 计划、审计、移交单都落在受管目录
@@ -376,6 +389,7 @@ public 快照与 private truth 回写入口示例：
 - `.runtime-workspace` -> `repos/proxy_ops_private/inventory/*` 的 reviewed sync-back 入口
 - redeploy 时“旧 seed 镜像自动刷新、已漂移现场保留”的现场清单同步
 - `infra-core` 模块注册脚本、固定镜像标签和人工回退备份
+- Codex Responses 上游链路只读诊断探针：`scripts/probe_responses_chain.py`
 
 当前仍未完成：
 
@@ -386,6 +400,8 @@ public 快照与 private truth 回写入口示例：
 当前网络入口结论：
 
 - 推荐入口是域名 `https://proxy-platform-operator.svc.prod.lab.gglohh.top:27111/`
+- Full Flow Trigger Gateway 推荐入口是域名 `https://full-flow-trigger.svc.prod.lab.gglohh.top:27111/`
+- Full Flow Trigger Gateway 保留兼容路径 `https://proxy-platform-operator.svc.prod.lab.gglohh.top:27111/full-flow-trigger/`
 - `18082` 直连端口在宿主机内已经可用，但当前外部直连未放通，所以它是“宿主机 fallback”，不是主要公网入口
 
 当前 `CLIProxyAPIPlus` worker 的权责边界如下：
@@ -394,6 +410,10 @@ public 快照与 private truth 回写入口示例：
   负责统一帮助入口、工作区编排、repo 同步、宿主机 toolchain 诊断和平台级文档。
 - `remote_proxy`
   负责 `cliproxy-plus` 的真实部署基线、版本切换、Podman/systemd 服务生成以及 usage 备份恢复生命周期。
+- `CPA Usage Keeper`
+  在 CLIProxyAPI v6.10.0 之后负责消费 CLIProxyAPI Redis/RESP usage stream 并保存 durable usage/report 状态。`proxy-platform` 只记录组合部署和验证要求，不接管 usage 数据库。
+- `Cli-Proxy-API-Management-Center`
+  作为可选管理 UI 纳管，不能替代 Usage Keeper 的持久化职责。
 
 当前 `proxy-platform jobs plan-deploy-host` / `jobs plan-decommission-host` 的作用，是把这类动作先固定成平台可审阅的 plan / audit / authority handoff 入口，不替代下游 authority path。
 
@@ -423,7 +443,7 @@ public 快照与 private truth 回写入口示例：
 - `/hosts`: 主机现场清单
 - `/subscriptions`: 订阅入口
 - `/providers`: 本地 provider 生命周期
-- `/worker-quotas`: 远端 worker / oauth 文件配额
+- `/worker-connections`: 远端 worker 连接与 oauth 剩余余额
 - `/jobs`: 主机登记作业
 - `/audit`: 作业审计
 
@@ -431,23 +451,33 @@ public 快照与 private truth 回写入口示例：
 
 - 首页“健康可用”来自最近一次 TCP 最小探测，不会把 `unknown` 当成 `healthy`。
 - `/subscriptions` 会把普通 HTTPS 订阅 URL 和 `hiddify://...` Deep Link 分开表达；前者用于手动填写订阅地址，后者用于拉起 Hiddify 或从剪贴板导入。
-- `/worker-quotas` 只读消费 `cliproxy-control-plane` 的 `/api/accounts/latest-view` 与 `/api/tactical-stats/overview`；如果权威控制面没有返回最新快照，页面会明确显示“无最新配额快照”，而不是在 `proxy-platform` 里伪造 quota 真相。
+- `/worker-connections` 只读消费 `cliproxy-control-plane` 的权威接口，但当前正式口径是：
+  - `/api/accounts/latest-view` 是连接态与余额窗口的主事实源
+  - `/api/tactical-stats/overview` 只作为增强输入，不再是页面可用性的硬依赖
+  - 如果 `overview` 暂时不可用，页面仍保持可读，并显式标记为降级推导
+  - legacy `/worker-quotas` 与 `/api/worker-quotas` 仅保留为兼容别名
+  - 页面只投影连接状态和剩余余额窗口，不在 `proxy-platform` 里伪造 quota 真相或复制 probe 调度逻辑
 
 ## 远端部署与维护
 
 首次或重发部署：
 
 ```bash
-./deploy/infra-core-module/register_module.sh
-ssh -p 52117 gaoyx@112.28.134.53 'cd /mnt/hdo/infra-core && scripts/modulectl.sh up proxy-platform-operator'
+REMOTE_HOST=<operator>@<current-infra-core-host> REMOTE_PORT=<ssh-port> \
+  ./deploy/infra-core-module/register_module.sh
+ssh -p <ssh-port> <operator>@<current-infra-core-host> \
+  'cd /mnt/hdo/infra-core && scripts/modulectl.sh up proxy-platform-operator'
 ```
+
+`REMOTE_HOST` 必须显式给出。旧的 `112.28.134.53` 机器已经不可用，部署脚本不会再内置这个默认值。
 
 构建默认走 `docker.m.daocloud.io` + 阿里云 PyPI + 阿里云 Debian 镜像；如果镜像站有变更，可以通过 `PYTHON_BASE_IMAGE`、`PIP_INDEX_URL`、`PIP_TRUSTED_HOST`、`APT_MIRROR_URL` 覆盖。
 
 如果你希望把“注册模块 + 拉起服务 + 健康失败时自动回退”收成一个入口，现在可以用：
 
 ```bash
-ENABLE_AUTO_ROLLBACK=1 ./deploy/infra-core-module/redeploy_with_rollback.sh
+REMOTE_HOST=<operator>@<current-infra-core-host> REMOTE_PORT=<ssh-port> \
+  ENABLE_AUTO_ROLLBACK=1 ./deploy/infra-core-module/redeploy_with_rollback.sh
 ```
 
 它默认仍然是关闭自动回退的。换句话说，仓库不会在你没明确开启时擅自回切；只有显式给出 `ENABLE_AUTO_ROLLBACK=1`，脚本才会在健康检查失败后尝试恢复上一版镜像和最新备份。
@@ -457,14 +487,17 @@ ENABLE_AUTO_ROLLBACK=1 ./deploy/infra-core-module/redeploy_with_rollback.sh
 更新认证口令或域名：
 
 ```bash
-ssh -p 52117 gaoyx@112.28.134.53 'vi /mnt/hdo/infra-core/modules/proxy-platform-operator/.env'
-ssh -p 52117 gaoyx@112.28.134.53 'cd /mnt/hdo/infra-core && scripts/modulectl.sh up proxy-platform-operator'
+ssh -p <ssh-port> <operator>@<current-infra-core-host> \
+  'vi /mnt/hdo/infra-core/modules/proxy-platform-operator/.env'
+ssh -p <ssh-port> <operator>@<current-infra-core-host> \
+  'cd /mnt/hdo/infra-core && scripts/modulectl.sh up proxy-platform-operator'
 ```
 
 查看远端容器状态：
 
 ```bash
-ssh -p 52117 gaoyx@112.28.134.53 'docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep proxy-platform-operator'
+ssh -p <ssh-port> <operator>@<current-infra-core-host> \
+  'docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep proxy-platform-operator'
 ```
 
 查看远端健康检查：
@@ -476,7 +509,8 @@ curl -k https://proxy-platform-operator.svc.prod.lab.gglohh.top:27111/health
 如果模块起不来，先检查认证配置是不是缺项：
 
 ```bash
-ssh -p 52117 gaoyx@112.28.134.53 'cd /mnt/hdo/infra-core && scripts/modulectl.sh logs proxy-platform-operator | tail -n 50'
+ssh -p <ssh-port> <operator>@<current-infra-core-host> \
+  'cd /mnt/hdo/infra-core && scripts/modulectl.sh logs proxy-platform-operator | tail -n 50'
 ```
 
 如果 `.env` 里缺少 `PROXY_PLATFORM_OPERATOR_BASIC_AUTH_USERNAME` 或 `PROXY_PLATFORM_OPERATOR_BASIC_AUTH_PASSWORD`，或者密码还是占位符值，当前版本会直接拒绝启动。这是故意设计的，目的就是防止“配置丢了一半，站点却裸奔上线”。
@@ -487,6 +521,10 @@ ssh -p 52117 gaoyx@112.28.134.53 'cd /mnt/hdo/infra-core && scripts/modulectl.sh
 2. 回到 `infra-core` 根目录执行 `scripts/modulectl.sh up proxy-platform-operator`。
 
 需要强调的是：这里的回退是“模块发布物回退”，不是“远端代理节点回退”。远端代理节点的生命周期回退 owner 仍然是 `remote_proxy` 或 `infra_core`。
+
+CLIProxyAPI + CPA Usage Keeper 的组合部署、CLIProxyAPI Redis/RESP usage stream、CPAMC 可选管理 UI 和验证 receipts 见 `docs/runbooks/standalone-cliproxy-api-rollout.md`。这里仍然只描述平台 operator 模块的部署入口。
+
+`deploy-harness plan` 是给 agent 使用的薄 harness 入口。它只生成场景化 dry-run/apply/verify/rollback 收据合同，不直接 SSH、不保存 secret、不替代 `remote_proxy`、`proxy_ops_private` 或 `cliproxy-control-plane` 的运行态职责。当前内置场景是 `cliproxyapi_usagekeeper_standalone`，用于把 CLIProxyAPI、CLIProxyAPI Redis/RESP usage stream、CPA Usage Keeper 和可选 CPAMC 的部署检查收敛成一个可审阅计划。
 
 ## 设计原则
 

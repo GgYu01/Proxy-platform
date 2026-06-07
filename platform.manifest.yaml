@@ -109,22 +109,26 @@ authority_adapters:
     topology: standalone_vps
     runtime_service: cliproxy-plus
     handoff_method: service_script
-    entrypoint: repos/remote_proxy/scripts/service.sh
+    entrypoint: repos/remote_proxy/scripts/cliproxy_api_standalone_rollout.sh
     service_name: cliproxy-plus
     actions:
-      deploy_host: install
+      deploy_host: install-combo
     required_paths:
       - repos/remote_proxy
     required_env_files:
       - repos/remote_proxy/config/cliproxy-plus.env
+      - repos/remote_proxy/config/cpa-usage-keeper.env
     required_env_keys:
       - CLIPROXY_IMAGE
       - CLIPROXY_PORT
-      - CLIPROXY_MEMORY_LIMIT
       - CLIPROXY_MANAGEMENT_KEY
       - CLIPROXY_MANAGEMENT_ALLOW_REMOTE
       - CLIPROXY_API_KEY
       - CLIPROXY_USAGE_STATISTICS_ENABLED
+      - CLIPROXY_REDIS_USAGE_QUEUE_RETENTION_SECONDS
+      - CPA_MANAGEMENT_KEY
+      - LOGIN_PASSWORD
+      - APP_PORT
     rollback_owner: remote_proxy
     rollback_hint: Review remote_proxy install/update path before rollback.
     notes:
@@ -151,29 +155,85 @@ authority_adapters:
     rollback_hint: Re-run reviewed install after remote cleanup if rollback is needed.
     notes:
       - remote_proxy does not expose a shared decommission command yet
-  - id: remote_proxy_cliproxy_plus_infra_core_sidecar
-    display_name: remote_proxy infra-core sidecar handoff
-    owner_repo_id: remote_proxy
+
+deployment_harnesses:
+  - id: cliproxyapi_usagekeeper_standalone
+    display_name: CLIProxyAPI + CPA Usage Keeper standalone harness
     required_modes: [operator]
-    job_kinds: [deploy_host, decommission_host]
-    topology: infra_core_sidecar
-    runtime_service: cliproxy-plus
-    handoff_method: runbook_only
-    entrypoint: repos/remote_proxy/docs/deploy/infra-core-ubuntu-online.md
-    actions:
-      deploy_host: review_sidecar_deploy
-      decommission_host: review_sidecar_decommission
+    owner_repo_ids:
+      - remote_proxy
+      - proxy_ops_private
+      - cliproxy_control_plane
+    topology: standalone_vps
+    runtime_services:
+      - cliproxyapi
+      - cpausagekeeper
+    working_directory: repos/remote_proxy
     required_paths:
-      - repos/remote_proxy
-    downstream_required_paths:
-      - /mnt/hdo/infra-core
-    required_env_files: []
-    required_env_keys: []
-    rollback_owner: infra_core
-    rollback_hint: Use infra-core compose rollback after owner review.
+      - repos/remote_proxy/scripts/cliproxy_api_standalone_rollout.sh
+      - repos/remote_proxy/scripts/service.sh
+      - repos/remote_proxy/scripts/services/cliproxy_plus
+      - repos/remote_proxy/scripts/services/cpa_usage_keeper
+      - repos/remote_proxy/config/cliproxy-plus.env
+      - repos/remote_proxy/config/cpa-usage-keeper.env
+      - docs/runbooks/standalone-cliproxy-api-rollout.md
+    dry_run_command:
+      - env
+      - REMOTE_PROXY_ROLLOUT_DRY_RUN=true
+      - ./scripts/cliproxy_api_standalone_rollout.sh
+      - cliproxy-plus
+      - install-combo
+    apply_command:
+      - ./scripts/cliproxy_api_standalone_rollout.sh
+      - cliproxy-plus
+      - install-combo
+    verify_commands:
+      - ./scripts/service.sh cliproxy-plus verify-combo
+      - ./scripts/service.sh cliproxy-plus diagnose-usage
+      - "REMOTE_PROXY_USAGE_AUDIT_TRAFFIC_CMD='<usage-generating command>' ./scripts/service.sh cliproxy-plus audit-usage"
+      - 'curl -fsS -H "Authorization: Bearer ${CLIPROXY_API_KEY}" http://127.0.0.1:${CLIPROXY_PORT:-8317}/v1/models'
+      - 'curl -fsS -H "Authorization: Bearer ${CLIPROXY_MANAGEMENT_KEY}" http://127.0.0.1:${CLIPROXY_PORT:-8317}/v0/management/usage-queue?count=10'
+      - curl -fsS http://127.0.0.1:${APP_PORT:-8080}/health
+    required_env_keys:
+      - CLIPROXY_IMAGE
+      - CLIPROXY_PORT
+      - CLIPROXY_MANAGEMENT_KEY
+      - CLIPROXY_API_KEY
+      - CLIPROXY_USAGE_STATISTICS_ENABLED
+      - CLIPROXY_REDIS_USAGE_QUEUE_RETENTION_SECONDS
+      - REDIS_QUEUE_ADDR
+      - CPA_MANAGEMENT_KEY
+      - AUTH_ENABLED
+      - LOGIN_PASSWORD
+      - CPA_BASE_URL
+      - CPA_PUBLIC_URL
+      - APP_PORT
+    secret_env_keys:
+      - CLIPROXY_MANAGEMENT_KEY
+      - CLIPROXY_API_KEY
+      - CPA_MANAGEMENT_KEY
+      - LOGIN_PASSWORD
+    receipt_checks:
+      - dry_run_exit_zero
+      - apply_exit_zero
+      - cliproxy_service_active
+      - models_endpoint_ok
+      - usage_queue_read
+      - keeper_health
+      - usage_pipeline_diagnostic_recorded
+      - keeper_durable_rows_growth
+      - rollback_owner_recorded
+    rollback_owner: remote_proxy
+    rollback_command:
+      - ./scripts/service.sh
+      - cliproxy-plus
+      - switch-version
+      - ${CLIPROXY_PREVIOUS_IMAGE}
     notes:
-      - do not run remote_proxy install.sh inside /mnt/hdo/infra-core
-      - actual compose lifecycle remains owned by infra-core
+      - proxy-platform creates a sanitized plan and receipt contract only
+      - live SSH, systemd, Podman, CLIProxyAPI Redis/RESP usage stream, and keeper mutation remain in downstream repos or target-host workspaces
+      - CPA Usage Keeper is required for durable usage history when CLIProxyAPI exposes Redis/RESP usage queue events
+      - CPAMC remains optional operator UI and is not the usage truth source
 
 state_sources:
   - id: host_registry
@@ -313,6 +373,8 @@ commands:
     description: 初始化工作区，支持 fetch / local override / clone 三类物化路径
   jobs:
     description: 生成 mutation job plan，记录 audit，并在允许的 executor 上执行 apply
+  deploy-harness:
+    description: 生成 agent-facing deployment harness plan 和 verification receipt contract
   subscriptions:
     description: 基于主机登记册和观测回报预览订阅派生结果
   sync:

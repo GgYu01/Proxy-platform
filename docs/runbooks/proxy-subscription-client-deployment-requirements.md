@@ -30,15 +30,42 @@
 - `singbox-client-profile.json` / `singbox_remote_profile.json`。
 - 不再发布 Hiddify deep link 作为页面入口或生成产物；如需兼容其它客户端，使用原始 VLESS 订阅 URL。
 
-当前公开订阅 base URL：
+当前公开订阅 base URL（权威，LisaHost SEA BGP 临时宿主）：
 
-- `https://proxy-subscriptions.svc.prod.lab.gglohh.top:27111/subscriptions`
+- `http://69.5.53.82:18080/subscriptions`
 
-Windows 本地安装脚本可使用的备用订阅 URL：
+已退役、不得再作为客户端主入口：
+
+- `https://proxy-subscriptions.svc.prod.lab.gglohh.top:27111/subscriptions`（原 infra-core Traefik；主机 `112.28.134.53` 已删除）
+
+未来 HTTPS 入口（k0s Traefik / `sea.prod.gglohh.top` 就绪后迁移，不在本轮实现）：
+
+- 待定；迁移前继续使用 `:18080` HTTP 入口
+
+Windows 本地安装脚本使用的 mihomo 订阅 URL：
 
 - `http://69.5.53.82:18080/subscriptions/mihomo-universal.yaml`
 
 订阅域名或 IP 必须在 mihomo 配置中走 `DIRECT`，避免配置更新依赖已成功工作的代理路径。
+
+## 订阅发布（运维）
+
+生成产物：
+
+```bash
+python repos/proxy_ops_private/scripts/render_artifacts.py
+```
+
+发布到 LisaHost SEA BGP 临时宿主（默认读取 `inventory/subscriptions.yaml` 的 `publish` 元数据）：
+
+```bash
+bash repos/proxy_ops_private/scripts/publish_subscriptions_to_sea_host.sh --dry-run
+REMOTE_PASSWORD='...' bash repos/proxy_ops_private/scripts/publish_subscriptions_to_sea_host.sh
+```
+
+`publish_subscriptions_to_infra_core.sh` 仅为兼容 wrapper，会委托到新脚本。
+
+远端路径：`/srv/proxy-subscriptions/public/subscriptions`，由 `gg-proxy-subscriptions-http.service` 在 `:18080` 提供 HTTP 静态服务。不要发布到 `/mnt/hdo/infra-core`（infra-core 已退役）。
 
 ## 节点优先级
 

@@ -121,20 +121,39 @@ def test_load_manifest_tracks_job_policy_and_audit_config() -> None:
     assert manifest.jobs.policy_for("deploy_host").allow_apply is True
     assert manifest.jobs.policy_for("deploy_host").executor == "authority_handoff"
     assert manifest.jobs.policy_for("decommission_host").executor == "authority_handoff"
+    assert "deployment harness" in manifest.commands["deploy-harness"].description
     assert manifest.authority_adapters["remote_proxy_cliproxy_plus_standalone"].entrypoint == Path(
-        "repos/remote_proxy/scripts/service.sh"
+        "repos/remote_proxy/scripts/cliproxy_api_standalone_rollout.sh"
     )
-    assert manifest.authority_adapters["remote_proxy_cliproxy_plus_standalone"].actions["deploy_host"] == "install"
+    assert manifest.authority_adapters["remote_proxy_cliproxy_plus_standalone"].actions["deploy_host"] == "install-combo"
     assert (
         manifest.authority_adapters["remote_proxy_cliproxy_plus_standalone_decommission"].handoff_method
         == "runbook_only"
     )
-    assert manifest.authority_adapters["remote_proxy_cliproxy_plus_infra_core_sidecar"].required_paths == (
-        Path("repos/remote_proxy"),
-    )
-    assert manifest.authority_adapters["remote_proxy_cliproxy_plus_infra_core_sidecar"].downstream_required_paths == (
-        Path("/mnt/hdo/infra-core"),
-    )
+
+
+def test_load_manifest_tracks_deployment_harness_scenarios() -> None:
+    manifest = load_manifest(Path(__file__).resolve().parents[1] / "platform.manifest.yaml")
+
+    scenario = manifest.deployment_harnesses["cliproxyapi_usagekeeper_standalone"]
+
+    assert scenario.display_name == "CLIProxyAPI + CPA Usage Keeper standalone harness"
+    assert scenario.required_modes == ["operator"]
+    assert scenario.owner_repo_ids == ["remote_proxy", "proxy_ops_private", "cliproxy_control_plane"]
+    assert scenario.working_directory == Path("repos/remote_proxy")
+    assert scenario.rollback_owner == "remote_proxy"
+    assert scenario.rollback_command == [
+        "./scripts/service.sh",
+        "cliproxy-plus",
+        "switch-version",
+        "${CLIPROXY_PREVIOUS_IMAGE}",
+    ]
+    assert scenario.secret_env_keys == [
+        "CLIPROXY_MANAGEMENT_KEY",
+        "CLIPROXY_API_KEY",
+        "CPA_MANAGEMENT_KEY",
+        "LOGIN_PASSWORD",
+    ]
 
 
 def test_load_manifest_rejects_authority_adapter_with_unknown_repo(tmp_path: Path) -> None:

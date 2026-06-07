@@ -533,3 +533,40 @@ def test_public_base_url_override_rewrites_mihomo_links_and_direct_host(monkeypa
     assert "http://69.5.53.82:18080/subscriptions/mihomo-universal.yaml" in html
     assert "DOMAIN,69.5.53.82,DIRECT" in config["rules"]
     assert "DOMAIN-SUFFIX,69.5.53.82,DIRECT" in config["rules"]
+
+
+def test_subscriptions_inventory_uses_sea_bgp_authoritative_base_url() -> None:
+    subscriptions = yaml.safe_load((PRIVATE_ROOT / "inventory" / "subscriptions.yaml").read_text(encoding="utf-8"))
+    assert subscriptions["subscription_base_url"] == "http://69.5.53.82:18080/subscriptions"
+    assert subscriptions["publish"]["node"] == "us_sea_bgp_01"
+    assert ":27111" not in subscriptions["subscription_base_url"]
+
+
+def test_generated_subscriptions_do_not_use_deprecated_27111_urls() -> None:
+    subscriptions_dir = PRIVATE_ROOT / "generated" / "subscriptions"
+    for path in subscriptions_dir.iterdir():
+        if path.is_file():
+            text = path.read_text(encoding="utf-8")
+            assert ":27111" not in text, f"deprecated URL found in {path.name}"
+
+
+def test_infra_core_sidecar_scripts_removed() -> None:
+    removed = [
+        PRIVATE_ROOT / "scripts" / "apply_infra_core_sidecar.sh",
+        PRIVATE_ROOT / "scripts" / "check_infra_core_egress_ip.sh",
+        PRIVATE_ROOT / "scripts" / "check_infra_core_sidecar.sh",
+        PRIVATE_ROOT / "scripts" / "deploy_infra_core_failover_controller.sh",
+        PRIVATE_ROOT / "scripts" / "reconcile_infra_core_failover.py",
+    ]
+    for path in removed:
+        assert not path.exists(), f"expected removed: {path}"
+
+
+def test_runbook_documents_sea_bgp_primary_subscription_url() -> None:
+    runbook = (ROOT / "docs" / "runbooks" / "proxy-subscription-client-deployment-requirements.md").read_text(
+        encoding="utf-8"
+    )
+    assert "http://69.5.53.82:18080/subscriptions" in runbook
+    assert "publish_subscriptions_to_sea_host.sh" in runbook
+    assert "27111" in runbook
+    assert "已退役" in runbook or "deprecated" in runbook.lower() or "不得" in runbook
