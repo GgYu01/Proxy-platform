@@ -300,6 +300,7 @@ projections:
     required_modes: [operator]
     rules:
       require_registry_enabled: true
+      exclude_unavailable_after_hours: 72
       include_unhealthy_observed_hosts: true
       include_observation_only_hosts: false
 

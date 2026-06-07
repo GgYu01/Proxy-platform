@@ -78,6 +78,33 @@
     </ul>
   </section>
 
+  {% if subscription_excluded_rows %}
+  <section class="panel panel-half">
+    <div class="panel-header">
+      <div>
+        <p class="panel-kicker">Auto Excluded</p>
+        <h2>已自动暂停</h2>
+      </div>
+      <p class="panel-note">这些节点连续 TCP 探测不可用已达 72 小时，不会出现在公开订阅产物中；恢复后会自动加回。</p>
+    </div>
+    <ul class="subscription-list">
+      {% for item in subscription_excluded_rows %}
+      <li class="subscription-item">
+        <div>
+          <strong>{{ item.name }}</strong>
+          <div class="cell-meta">{{ item.alias }}</div>
+          <div class="cell-meta">不可用自 {{ item.unavailable_since }}</div>
+        </div>
+        <span class="status-badge" data-health="danger">已剔除</span>
+        <div class="subscription-actions">
+          <small class="link-code">{{ item.detail }}</small>
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
   <section class="panel panel-half">
     <div class="panel-header">
       <div>

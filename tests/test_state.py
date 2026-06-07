@@ -57,7 +57,9 @@ observations:
     assert views[1].subscription_included is False
 
 
-def test_project_subscription_includes_hosts_even_when_observation_is_down(tmp_path: Path) -> None:
+def test_project_subscription_includes_hosts_when_observation_is_down_but_not_availability_excluded(
+    tmp_path: Path,
+) -> None:
     registry_path = tmp_path / "registry.yaml"
     registry_path.write_text(
         """

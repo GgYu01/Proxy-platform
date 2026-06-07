@@ -67,6 +67,28 @@ REMOTE_PASSWORD='...' bash repos/proxy_ops_private/scripts/publish_subscriptions
 
 远端路径：`/srv/proxy-subscriptions/public/subscriptions`，由 `gg-proxy-subscriptions-http.service` 在 `:18080` 提供 HTTP 静态服务。不要发布到 `/mnt/hdo/infra-core`（infra-core 已退役）。
 
+## 可用性剔除（72 小时）
+
+- 策略配置：`repos/proxy_ops_private/inventory/subscriptions.yaml` → `availability_policy`
+- 账本：`repos/proxy_ops_private/state/node_availability.json`（git 跟踪）
+- 判定：TCP 连接 `base_port + probe_port_offset`（默认 +1），与 platform `observation_probe` 一致
+- 连续不可用 ≥72h → 从 `v2ray_nodes.txt`、`mihomo-universal.yaml`、landing 单节点链接等产物剔除；**不修改** `nodes.yaml` 的 `enabled`
+- 探测恢复 → 下次 `render_artifacts.py` 自动加回
+- 运维豁免：节点设置 `subscription_availability_exempt: true`
+- 若剔除后剩余可发布节点 `< min_published_nodes`，render / publish **失败退出**
+
+日常探测（建议每 6 小时，即使不 render）：
+
+```bash
+python repos/proxy_ops_private/scripts/reconcile_subscription_node_availability.py --probe --report
+```
+
+发布脚本会在上传前自动执行 `render_artifacts.py`（含 probe）并打印 exclusion 摘要。离线测试可设 `SKIP_AVAILABILITY_PROBE=1`。
+
+客户端在节点被剔除后需**手动更新订阅**才能去掉本地缓存的死链。
+
+详见 [ADR-0021](../adr/ADR-0021-subscription-node-availability-pruning.md)。
+
 ## 节点优先级
 
 当前订阅故障转移优先级要求如下：

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 import yaml
+
+from proxy_platform.subscription_availability import AvailabilityContext, evaluate_node_availability
 
 
 VALID_OBSERVED_STATUSES = ("healthy", "degraded", "down", "unknown")
@@ -21,6 +24,7 @@ class HostRecord:
     provider: str
     enabled: bool
     include_in_subscription: bool
+    subscription_availability_exempt: bool
     tags: tuple[str, ...]
 
 
@@ -106,6 +110,7 @@ def load_host_registry(path: str | Path) -> HostRegistry:
                 provider=str(item["provider"]),
                 enabled=bool(item.get("enabled", True)),
                 include_in_subscription=bool(item.get("include_in_subscription", True)),
+                subscription_availability_exempt=bool(item.get("subscription_availability_exempt", False)),
                 tags=tuple(str(value) for value in item.get("tags", [])),
             )
         )
@@ -140,6 +145,9 @@ def load_host_observations(path: str | Path) -> HostObservationSnapshot:
 def build_host_views(
     registry: HostRegistry,
     observations: HostObservationSnapshot | None = None,
+    *,
+    availability_context: AvailabilityContext | None = None,
+    now: datetime | None = None,
 ) -> tuple[HostView, ...]:
     observation_by_host = observations.by_host_id() if observations else {}
     views: list[HostView] = []
@@ -148,8 +156,21 @@ def build_host_views(
         observed_status = observation.status if observation else "unknown"
         observation_source = observation.source if observation else "none"
         desired_state = "enabled" if host.enabled else "disabled"
-        subscription_included = host.enabled and host.include_in_subscription
-        subscription_reason = _subscription_reason(host)
+        registry_included = host.enabled and host.include_in_subscription
+        availability = evaluate_node_availability(
+            node_name=host.host_id,
+            subscription_availability_exempt=host.subscription_availability_exempt,
+            registry_publishable=registry_included,
+            context=availability_context,
+            now=now,
+        )
+        subscription_included = registry_included and availability.status in {
+            "included",
+            "unknown",
+            "pending",
+            "exempt",
+        }
+        subscription_reason = _subscription_reason(host, availability)
         views.append(
             HostView(
                 host_id=host.host_id,
@@ -170,8 +191,11 @@ def build_host_views(
 def project_subscription(
     registry: HostRegistry,
     observations: HostObservationSnapshot | None = None,
+    *,
+    availability_context: AvailabilityContext | None = None,
+    now: datetime | None = None,
 ) -> SubscriptionProjection:
-    views = build_host_views(registry, observations)
+    views = build_host_views(registry, observations, availability_context=availability_context, now=now)
     members = tuple(
         SubscriptionMember(
             host_id=view.host_id,
@@ -200,11 +224,17 @@ def project_subscription(
     )
 
 
-def _subscription_reason(host: HostRecord) -> str:
+def _subscription_reason(host: HostRecord, availability) -> str:
     if not host.enabled:
         return "excluded: disabled in registry"
     if not host.include_in_subscription:
         return "excluded: registry marks host as out of subscription"
+    if availability.status == "excluded":
+        return "excluded: auto_excluded_unavailable_72h"
+    if availability.status == "pending":
+        return "included: pending availability (<72h down)"
+    if host.subscription_availability_exempt:
+        return "included: availability exempt"
     return "included: registry enabled host for subscription"
 
 

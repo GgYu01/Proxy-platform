@@ -47,6 +47,9 @@ def refresh_host_observations(
     )
     observations_path.parent.mkdir(parents=True, exist_ok=True)
     observations_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    from proxy_platform.subscription_availability import update_availability_ledger_from_probe_hosts
+
+    update_availability_ledger_from_probe_hosts(resolved_workspace_root, list(payload["hosts"]))
 
     healthy_hosts = sum(1 for item in payload["hosts"] if item["health"] == "healthy")
     down_hosts = sum(1 for item in payload["hosts"] if item["health"] == "down")

@@ -27,7 +27,7 @@ def build_overview_page_context(
     providers: list[dict[str, Any]],
     audits: list[dict[str, Any]],
     jobs_enabled: bool,
-    worker_quotas_enabled: bool = False,
+    worker_connections_enabled: bool = False,
 ) -> dict[str, Any]:
     sections = _build_console_sections(
         host_views=host_views,
@@ -40,7 +40,7 @@ def build_overview_page_context(
         active_mode=active_mode,
         jobs_enabled=jobs_enabled,
         active_page="overview",
-        worker_quotas_enabled=worker_quotas_enabled,
+        worker_connections_enabled=worker_connections_enabled,
     )
     action_cards = [
         {
@@ -65,13 +65,13 @@ def build_overview_page_context(
             "tone": "neutral",
         },
     ]
-    if worker_quotas_enabled:
+    if worker_connections_enabled:
         action_cards.append(
             {
-                "href": "/worker-quotas",
-                "kicker": "Worker quotas",
-                "title": "远端 worker 配额",
-                "description": "按 worker 分组查看不同 oauth 文件的 quota、probe 和回退状态。",
+                "href": "/worker-connections",
+                "kicker": "Worker links",
+                "title": "远端连接与余额",
+                "description": "只看 worker 连通性和 oauth 剩余余额窗口，不再摊开旧 quota/probe 控制面细节。",
                 "tone": "accent",
             }
         )
@@ -116,7 +116,7 @@ def build_hosts_page_context(
     providers: list[dict[str, Any]],
     audits: list[dict[str, Any]],
     jobs_enabled: bool,
-    worker_quotas_enabled: bool = False,
+    worker_connections_enabled: bool = False,
 ) -> dict[str, Any]:
     sections = _build_console_sections(
         host_views=host_views,
@@ -129,7 +129,7 @@ def build_hosts_page_context(
         active_mode=active_mode,
         jobs_enabled=jobs_enabled,
         active_page="hosts",
-        worker_quotas_enabled=worker_quotas_enabled,
+        worker_connections_enabled=worker_connections_enabled,
     )
     return {
         **context,
@@ -149,7 +149,7 @@ def build_subscriptions_page_context(
     providers: list[dict[str, Any]],
     audits: list[dict[str, Any]],
     jobs_enabled: bool,
-    worker_quotas_enabled: bool = False,
+    worker_connections_enabled: bool = False,
 ) -> dict[str, Any]:
     sections = _build_console_sections(
         host_views=host_views,
@@ -162,7 +162,7 @@ def build_subscriptions_page_context(
         active_mode=active_mode,
         jobs_enabled=jobs_enabled,
         active_page="subscriptions",
-        worker_quotas_enabled=worker_quotas_enabled,
+        worker_connections_enabled=worker_connections_enabled,
     )
     return {
         **context,
@@ -182,7 +182,7 @@ def build_providers_page_context(
     providers: list[dict[str, Any]],
     audits: list[dict[str, Any]],
     jobs_enabled: bool,
-    worker_quotas_enabled: bool = False,
+    worker_connections_enabled: bool = False,
 ) -> dict[str, Any]:
     sections = _build_console_sections(
         host_views=host_views,
@@ -195,7 +195,7 @@ def build_providers_page_context(
         active_mode=active_mode,
         jobs_enabled=jobs_enabled,
         active_page="providers",
-        worker_quotas_enabled=worker_quotas_enabled,
+        worker_connections_enabled=worker_connections_enabled,
     )
     return {
         **context,
@@ -216,7 +216,7 @@ def build_jobs_page_context(
     providers: list[dict[str, Any]],
     audits: list[dict[str, Any]],
     jobs_enabled: bool,
-    worker_quotas_enabled: bool = False,
+    worker_connections_enabled: bool = False,
 ) -> dict[str, Any]:
     sections = _build_console_sections(
         host_views=host_views,
@@ -229,7 +229,7 @@ def build_jobs_page_context(
         active_mode=active_mode,
         jobs_enabled=jobs_enabled,
         active_page="jobs",
-        worker_quotas_enabled=worker_quotas_enabled,
+        worker_connections_enabled=worker_connections_enabled,
     )
     return {
         **context,
@@ -250,7 +250,7 @@ def build_audit_page_context(
     providers: list[dict[str, Any]],
     audits: list[dict[str, Any]],
     jobs_enabled: bool,
-    worker_quotas_enabled: bool = False,
+    worker_connections_enabled: bool = False,
 ) -> dict[str, Any]:
     sections = _build_console_sections(
         host_views=host_views,
@@ -263,7 +263,7 @@ def build_audit_page_context(
         active_mode=active_mode,
         jobs_enabled=jobs_enabled,
         active_page="audit",
-        worker_quotas_enabled=worker_quotas_enabled,
+        worker_connections_enabled=worker_connections_enabled,
     )
     return {
         **context,
@@ -272,6 +272,98 @@ def build_audit_page_context(
         "page_heading": "作业审计",
         "page_description": "这里集中展示最近计划和 apply 事件，帮助复核刚才的动作到底有没有落到审计里。",
         "empty_audit_message": "当前还没有审计事件。",
+    }
+
+
+def build_worker_connections_page_context(
+    *,
+    manifest_name: str,
+    active_mode: str,
+    host_views: list[dict[str, Any]],
+    subscriptions: dict[str, Any],
+    providers: list[dict[str, Any]],
+    audits: list[dict[str, Any]],
+    jobs_enabled: bool,
+    worker_connections: dict[str, Any],
+) -> dict[str, Any]:
+    sections = _build_console_sections(
+        host_views=host_views,
+        subscriptions=subscriptions,
+        providers=providers,
+        audits=audits,
+    )
+    context = _build_shell_context(
+        manifest_name=manifest_name,
+        active_mode=active_mode,
+        jobs_enabled=jobs_enabled,
+        active_page="worker-connections",
+        worker_connections_enabled=True,
+    )
+    meta = worker_connections.get("meta") if isinstance(worker_connections.get("meta"), dict) else {}
+    overview_status = str(meta.get("overview_status") or "available")
+    overview_warning = str(meta.get("overview_warning") or "").strip() or None
+    summary_cards = [
+        {
+            "label": "直连 worker",
+            "value": meta.get("worker_live", 0),
+            "help": "control-plane 当前还能实时连通并提供实时状态的 worker 数量。",
+            "tone": "success",
+        },
+        {
+            "label": "受限 worker",
+            "value": meta.get("worker_degraded", 0) + meta.get("worker_disconnected", 0),
+            "help": "处于 fallback 或 failed 的 worker，说明连接链仍有明显缺口。",
+            "tone": "warn",
+        },
+        {
+            "label": "已连通 oauth",
+            "value": meta.get("account_connected", 0),
+            "help": "最近探测成功、当前仍能证明连接正常的 oauth 文件数量。",
+            "tone": "accent",
+        },
+        {
+            "label": "可见余额",
+            "value": meta.get("balance_authoritative_accounts", 0),
+            "help": "拿到 authoritative quota 余额窗口的 oauth 文件数量。",
+            "tone": "neutral",
+        },
+        {
+            "label": "主窗口均值",
+            "value": _display_percent(meta.get("primary_remaining_average")),
+            "help": "所有带主窗口余额信号的 oauth 文件主窗口平均剩余百分比。",
+            "tone": "accent",
+        },
+        {
+            "label": "扩展窗口均值",
+            "value": _display_percent(meta.get("secondary_remaining_average")),
+            "help": "所有带扩展窗口余额信号的 oauth 文件次窗口平均剩余百分比。",
+            "tone": "neutral",
+        },
+    ]
+    return {
+        **context,
+        **sections,
+        "page_title": "proxy-platform worker connections",
+        "page_heading": "远端连接与剩余余额面板",
+        "page_description": "这里只读消费 cliproxy-control-plane 的权威接口，但只投影两类信息：worker 连接状态，以及各 oauth 文件当前可见的剩余余额窗口。",
+        "worker_connection_summary_cards": summary_cards,
+        "worker_connection_meta": {
+            "captured_at": meta.get("captured_at") or "未提供时间",
+            "overview_status_label": _worker_connection_overview_status_label(overview_status),
+            "overview_status_tone": _worker_connection_overview_status_tone(overview_status),
+            "worker_live": meta.get("worker_live", 0),
+            "worker_degraded": meta.get("worker_degraded", 0),
+            "worker_disconnected": meta.get("worker_disconnected", 0),
+            "worker_unknown": meta.get("worker_unknown", 0),
+            "account_total": meta.get("account_total", 0),
+            "balance_visible_accounts": meta.get("balance_visible_accounts", 0),
+        },
+        "worker_connection_overview_note": _worker_connection_overview_note(overview_status),
+        "worker_connection_overview_warning": overview_warning,
+        "worker_connection_workers": [
+            _build_worker_connection_worker_row(item) for item in worker_connections.get("workers", [])
+        ],
+        "empty_worker_connection_message": "当前 authority 控制面还没有返回任何远端连接或余额数据。",
     }
 
 
@@ -286,65 +378,17 @@ def build_worker_quotas_page_context(
     jobs_enabled: bool,
     worker_quotas: dict[str, Any],
 ) -> dict[str, Any]:
-    sections = _build_console_sections(
+    """Compatibility wrapper for callers still using the previous naming."""
+    return build_worker_connections_page_context(
+        manifest_name=manifest_name,
+        active_mode=active_mode,
         host_views=host_views,
         subscriptions=subscriptions,
         providers=providers,
         audits=audits,
-    )
-    context = _build_shell_context(
-        manifest_name=manifest_name,
-        active_mode=active_mode,
         jobs_enabled=jobs_enabled,
-        active_page="worker-quotas",
-        worker_quotas_enabled=True,
+        worker_connections=worker_quotas,
     )
-    meta = worker_quotas.get("meta") if isinstance(worker_quotas.get("meta"), dict) else {}
-    summary_cards = [
-        {
-            "label": "远端 worker",
-            "value": meta.get("worker_total", 0),
-            "help": "当前 authority 控制面返回给页面的 worker 总数。",
-            "tone": "accent",
-        },
-        {
-            "label": "oauth 文件",
-            "value": meta.get("account_total", 0),
-            "help": "按不同 auth_name 统计的账号文件行数。",
-            "tone": "neutral",
-        },
-        {
-            "label": "有最新配额快照",
-            "value": meta.get("accounts_with_snapshot", 0),
-            "help": "最近探测已经拿到 quota 快照的 oauth 文件数。",
-            "tone": "success",
-        },
-        {
-            "label": "最新探测失败",
-            "value": meta.get("fresh_probe_failures", 0),
-            "help": "最近刷新失败的 oauth 文件数，需要优先排查对应 worker。",
-            "tone": "warn",
-        },
-    ]
-    return {
-        **context,
-        **sections,
-        "page_title": "proxy-platform worker quotas",
-        "page_heading": "远端 worker / oauth 文件配额",
-        "page_description": "这里只读消费 cliproxy-control-plane 的权威快照，不把 worker/oauth quota 真相复制回 proxy-platform。",
-        "worker_quota_summary_cards": summary_cards,
-        "worker_quota_meta": {
-            "captured_at": meta.get("captured_at") or "未提供时间",
-            "worker_realtime": meta.get("worker_realtime", 0),
-            "worker_fallback": meta.get("worker_fallback", 0),
-            "worker_failed": meta.get("worker_failed", 0),
-            "accounts_without_snapshot": meta.get("accounts_without_snapshot", 0),
-        },
-        "worker_quota_workers": [
-            _build_worker_quota_worker_row(item) for item in worker_quotas.get("workers", [])
-        ],
-        "empty_worker_quota_message": "当前 authority 控制面还没有返回任何 worker/oauth 配额数据。",
-    }
 
 
 def _build_console_sections(
@@ -372,7 +416,7 @@ def _build_console_sections(
         {
             "label": "可发布节点",
             "value": publishable_hosts,
-            "help": "同时满足 enabled 与 include_in_subscription 的节点数量。",
+            "help": "满足登记册策略且未被 72 小时可用性剔除的节点数量。",
             "tone": "accent",
             "featured": False,
         },
@@ -399,6 +443,9 @@ def _build_console_sections(
         "subscription_multi_node_hiddify": str(subscriptions.get("multi_node_hiddify_import", "")),
         "subscription_remote_profile_url": str(subscriptions.get("remote_profile_url", "")),
         "subscription_rows": [_build_subscription_row(item) for item in subscriptions.get("per_node", [])],
+        "subscription_excluded_rows": [
+            _build_subscription_excluded_row(item) for item in subscriptions.get("excluded_availability", [])
+        ],
         "provider_rows": [_build_provider_row(item) for item in providers],
         "audit_rows": [_build_audit_row(item) for item in audits[:10]],
     }
@@ -410,7 +457,7 @@ def _build_shell_context(
     active_mode: str,
     jobs_enabled: bool,
     active_page: str,
-    worker_quotas_enabled: bool,
+    worker_connections_enabled: bool,
 ) -> dict[str, Any]:
     if not jobs_enabled:
         readonly_hint = (
@@ -455,13 +502,13 @@ def _build_shell_context(
             "help": "本地预算",
         },
     ]
-    if worker_quotas_enabled:
+    if worker_connections_enabled:
         nav_items.append(
             {
-                "id": "worker-quotas",
-                "href": "/worker-quotas",
-                "kicker": "Worker quotas",
-                "label": "配额",
+                "id": "worker-connections",
+                "href": "/worker-connections",
+                "kicker": "Worker links",
+                "label": "连接 / 余额",
                 "help": "worker / oauth",
             }
         )
@@ -535,6 +582,15 @@ def _build_host_row(item: dict[str, Any], alias_by_name: dict[str, str]) -> dict
     }
 
 
+def _build_subscription_excluded_row(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "name": str(item.get("name", "")),
+        "alias": str(item.get("alias", "")),
+        "unavailable_since": str(item.get("unavailable_since") or "未知"),
+        "detail": str(item.get("detail") or "连续不可用已达 72 小时阈值"),
+    }
+
+
 def _build_subscription_row(item: dict[str, Any]) -> dict[str, Any]:
     health_key = str(item.get("observed_health", "unknown"))
     health = HEALTH_META.get(health_key, HEALTH_META["unknown"])
@@ -570,60 +626,108 @@ def _build_audit_row(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _build_worker_quota_worker_row(item: dict[str, Any]) -> dict[str, Any]:
+def _build_worker_connection_worker_row(item: dict[str, Any]) -> dict[str, Any]:
     status = str(item.get("status", "unknown"))
     status_label, status_tone = _worker_status_meta(status)
     return {
         "worker_id": str(item.get("worker_id", "")),
         "status_label": status_label,
         "status_tone": status_tone,
+        "status_detail": _worker_status_detail(status),
         "captured_at": str(item.get("captured_at") or "未提供时间"),
-        "group_ids": item.get("group_ids", []),
         "account_total": int(item.get("account_total", 0)),
-        "accounts_with_snapshot": int(item.get("accounts_with_snapshot", 0)),
-        "accounts_without_snapshot": int(item.get("accounts_without_snapshot", 0)),
-        "fresh_probe_failures": int(item.get("fresh_probe_failures", 0)),
-        "accounts": [_build_worker_quota_account_row(account) for account in item.get("accounts", [])],
+        "connected_accounts": int(item.get("connected_accounts", 0)),
+        "issue_accounts": int(item.get("issue_accounts", 0)),
+        "balance_visible_accounts": int(item.get("balance_visible_accounts", 0)),
+        "balance_authoritative_accounts": int(item.get("balance_authoritative_accounts", 0)),
+        "primary_remaining_average": _display_percent(item.get("primary_remaining_average")),
+        "secondary_remaining_average": _display_percent(item.get("secondary_remaining_average")),
+        "accounts": [_build_worker_connection_account_row(account) for account in item.get("accounts", [])],
     }
 
 
-def _build_worker_quota_account_row(item: dict[str, Any]) -> dict[str, Any]:
-    probe_status = str(item.get("probe_status", "unknown"))
-    probe_label, probe_tone = _probe_status_meta(probe_status)
+def _build_worker_connection_account_row(item: dict[str, Any]) -> dict[str, Any]:
+    connection_state = str(item.get("connection_state", "waiting"))
+    connection_label, connection_tone = _connection_status_meta(connection_state)
+    primary_percent = _percent_or_zero(item.get("primary_remaining_percent"))
+    secondary_percent = _percent_or_zero(item.get("secondary_remaining_percent"))
     return {
         "auth_name": str(item.get("auth_name", "")),
         "email": str(item.get("email") or "未记录邮箱"),
         "group_id": str(item.get("group_id", "")),
         "provider": str(item.get("provider", "unknown")),
         "account_status": str(item.get("account_status", "unknown")),
-        "probe_label": probe_label,
-        "probe_tone": probe_tone,
-        "probe_message": str(item.get("probe_message") or "未提供探测说明"),
-        "probe_observed_at": str(item.get("probe_observed_at") or "未提供时间"),
-        "quota_summary": str(item.get("quota_summary") or "无最新配额快照"),
-        "reset_at": str(item.get("reset_at") or "未提供 reset"),
-        "capability_level": str(item.get("capability_level") or "unknown"),
-        "source_endpoint": str(item.get("source_endpoint") or "未提供来源接口"),
-        "latest_snapshot_present": bool(item.get("latest_snapshot_present")),
+        "connection_label": connection_label,
+        "connection_tone": connection_tone,
+        "connection_observed_at": str(item.get("connection_observed_at") or "未提供时间"),
+        "balance_summary": str(item.get("balance_summary") or "当前无剩余余额信号"),
+        "balance_reset_at": str(item.get("balance_reset_at") or "未提供 reset"),
+        "balance_signal": _balance_signal_label(
+            str(item.get("balance_capability_level", "unavailable")),
+            bool(item.get("has_authoritative_balance")),
+        ),
+        "has_balance_snapshot": bool(item.get("has_balance_snapshot")),
+        "primary_window_label": str(item.get("primary_window_label") or "P"),
+        "primary_remaining_label": _display_percent(item.get("primary_remaining_percent")),
+        "primary_bar_width": primary_percent,
+        "primary_reset_at": str(item.get("primary_reset_at") or "未提供 reset"),
+        "secondary_window_label": str(item.get("secondary_window_label") or "S"),
+        "secondary_remaining_label": _display_percent(item.get("secondary_remaining_percent")),
+        "secondary_bar_width": secondary_percent,
+        "secondary_reset_at": str(item.get("secondary_reset_at") or "未提供 reset"),
     }
 
 
 def _worker_status_meta(status: str) -> tuple[str, str]:
     if status == "realtime":
-        return "实时", "healthy"
+        return "直连中", "healthy"
     if status == "fallback":
-        return "回退", "accent"
+        return "回退中", "accent"
     if status == "failed":
-        return "失败", "danger"
+        return "失联", "danger"
     return "未知", "neutral"
 
 
-def _probe_status_meta(status: str) -> tuple[str, str]:
-    if status == "ok":
-        return "探测成功", "healthy"
-    if status == "error":
-        return "探测失败", "danger"
-    return "探测未知", "neutral"
+def _worker_status_detail(status: str) -> str:
+    if status == "realtime":
+        return "authority 仍能从这个 worker 拿到实时连接态与余额窗口。"
+    if status == "fallback":
+        return "当前退回最近成功快照，连接链受限但仍保留可读余额信息。"
+    if status == "failed":
+        return "worker 当前未提供可用实时连接，余额面板只能显示缺口。"
+    return "authority 没有给出稳定 worker 状态，需要继续在 control-plane 排障。"
+
+
+def _connection_status_meta(status: str) -> tuple[str, str]:
+    if status == "connected":
+        return "已连通", "healthy"
+    if status == "issue":
+        return "连接异常", "danger"
+    return "待刷新", "neutral"
+
+
+def _balance_signal_label(capability_level: str, authoritative: bool) -> str:
+    if authoritative:
+        return "权威余额"
+    if capability_level == "worker_usage_only":
+        return "仅 worker usage"
+    if capability_level == "account_state_only":
+        return "仅账号状态"
+    return "余额缺失"
+
+
+def _display_percent(value: Any) -> str:
+    if value is None or value == "":
+        return "--"
+    return f"{value}%"
+
+
+def _percent_or_zero(value: Any) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(100, number))
 
 
 def _publish_reason_text(reason: str) -> str:
@@ -633,4 +737,26 @@ def _publish_reason_text(reason: str) -> str:
         return "订阅策略排除"
     if reason == "disabled_in_registry":
         return "登记册已停用"
+    if reason == "auto_excluded_unavailable_72h":
+        return "连续不可用 ≥72h，已自动剔除"
+    if reason == "included_pending_availability":
+        return "探测异常，暂仍发布（未达 72h）"
     return reason or "未说明"
+
+
+def _worker_connection_overview_status_label(status: str) -> str:
+    if status == "degraded":
+        return "overview 降级"
+    return "overview 已接入"
+
+
+def _worker_connection_overview_status_tone(status: str) -> str:
+    if status == "degraded":
+        return "accent"
+    return "healthy"
+
+
+def _worker_connection_overview_note(status: str) -> str:
+    if status == "degraded":
+        return "当前 tactical overview 暂时不可用，worker 状态改由 accounts/latest-view 与余额快照推导，页面保持可读但会显式暴露降级。"
+    return "当前以 accounts/latest-view 作为主事实源，tactical overview 只做增强，不再成为页面可用性的硬依赖。"

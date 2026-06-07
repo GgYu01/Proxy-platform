@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
 import yaml
 
 
@@ -570,3 +573,45 @@ def test_runbook_documents_sea_bgp_primary_subscription_url() -> None:
     assert "publish_subscriptions_to_sea_host.sh" in runbook
     assert "27111" in runbook
     assert "已退役" in runbook or "deprecated" in runbook.lower() or "不得" in runbook
+
+
+def test_render_v2ray_subscription_honors_availability_ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import shutil
+
+    render_artifacts = load_render_artifacts_module()
+    fixture_root = tmp_path / "repo"
+    shutil.copytree(PRIVATE_ROOT / "inventory", fixture_root / "inventory")
+    shutil.copytree(PRIVATE_ROOT / "state", fixture_root / "state")
+    if (PRIVATE_ROOT / "secrets").exists():
+        shutil.copytree(PRIVATE_ROOT / "secrets", fixture_root / "secrets")
+    inventory = yaml.safe_load((fixture_root / "inventory" / "nodes.yaml").read_text(encoding="utf-8"))
+    node_name = next(
+        str(node["name"])
+        for node in inventory["nodes"]
+        if node.get("enabled") and node.get("include_in_subscription", True)
+    )
+    four_days_ago = (datetime.now(timezone.utc) - timedelta(days=4)).isoformat().replace("+00:00", "Z")
+    (fixture_root / "state" / "node_availability.json").write_text(
+        json.dumps(
+            {
+                "updated_at": "2026-06-07T00:00:00Z",
+                "nodes": {
+                    node_name: {
+                        "last_health": "down",
+                        "unavailable_since": four_days_ago,
+                        "detail": "tcp failed",
+                    }
+                },
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("SKIP_AVAILABILITY_PROBE", "1")
+    all_nodes = render_artifacts.render_v2ray_subscription(fixture_root)
+    excluded_single = render_artifacts.render_v2ray_subscription(fixture_root, node_name=node_name)
+
+    assert node_name not in all_nodes
+    assert excluded_single == ""
+    assert render_artifacts.subscription_eligible_nodes(fixture_root)

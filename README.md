@@ -169,8 +169,11 @@ python -m proxy_platform jobs audit-list --mode operator
 
 当前订阅派生规则是：
 
-- 只要主机在登记册里 `enabled=true` 且 `include_in_subscription=true`，就进入订阅。
-- `healthy` / `degraded` / `down` / `unknown` 只影响展示与审计，不自动把主机从订阅里移除。
+- 主机在登记册里 `enabled=true` 且 `include_in_subscription=true` 是进入订阅的前提。
+- TCP 探测（`base_port+1`）结果写入 `repos/proxy_ops_private/state/node_availability.json`；连续不可用 **≥72 小时** 的节点会从 v2ray / mihomo / landing 等公开产物中自动剔除（见 [ADR-0021](docs/adr/ADR-0021-subscription-node-availability-pruning.md)）。
+- 未满 72 小时的 down 节点仍发布，landing 标记「探测异常，暂仍发布」；从未探测过的节点默认保留。
+- `subscription_availability_exempt: true` 可豁免自动剔除。
+- `healthy` / `degraded` / `down` / `unknown` 观测仍影响 operator 展示与审计。
 - 登记册里没有的观测结果会被标成“未知观测主机”，用于后续盘点和治理。
 
 对应文档：
@@ -182,7 +185,8 @@ python -m proxy_platform jobs audit-list --mode operator
 - `docs/adr/ADR-0012-operator-web-infra-core-deployment.md`
 - `docs/adr/ADR-0013-public-snapshot-and-private-truth-sync.md`
 - `docs/adr/ADR-0014-operator-web-template-shell.md`
-- `docs/adr/ADR-0019-codex-responses-http-sse-compat-adapter.md`
+- `docs/adr/ADR-0020-sea-bgp-temporary-subscription-host.md`
+- `docs/adr/ADR-0021-subscription-node-availability-pruning.md`
 - `docs/repo-boundaries.md`
 - `docs/runbooks/operator-web-console.md`
 - `docs/runbooks/proxy-subscription-client-deployment-requirements.md`

@@ -19,6 +19,7 @@ class HostRecord:
     subscription_alias: str
     enabled: bool
     include_in_subscription: bool
+    subscription_availability_exempt: bool
     infra_core_candidate: bool
     change_policy: str
     provider: str
@@ -137,6 +138,7 @@ def _host_record_from_mapping(payload: dict[str, Any]) -> HostRecord:
         subscription_alias=str(payload["subscription_alias"]),
         enabled=bool(payload["enabled"]),
         include_in_subscription=bool(payload.get("include_in_subscription", True)),
+        subscription_availability_exempt=bool(payload.get("subscription_availability_exempt", False)),
         infra_core_candidate=bool(payload["infra_core_candidate"]),
         change_policy=str(payload["change_policy"]),
         provider=str(payload["provider"]),

@@ -7,8 +7,8 @@ from typing import Any
 from proxy_platform.inventory import load_host_registry
 from proxy_platform.manifest import ManifestError
 from proxy_platform.manifest import PlatformManifest
-from proxy_platform.projections import build_host_views
-from proxy_platform.projections import build_subscription_projection
+from proxy_platform.projections import build_host_views_for_workspace
+from proxy_platform.projections import build_subscription_projection_for_workspace
 from proxy_platform.public_state import load_public_host_console
 from proxy_platform.public_state import load_public_subscriptions
 
@@ -27,8 +27,8 @@ def load_view_state(
     if manifest.host_registry is not None and manifest.host_registry.applies_to_mode(mode):
         registry = load_host_registry(manifest.host_registry, resolved_workspace_root)
         return (
-            [asdict(item) for item in build_host_views(registry)],
-            asdict(build_subscription_projection(registry)),
+            [asdict(item) for item in build_host_views_for_workspace(registry, str(resolved_workspace_root))],
+            asdict(build_subscription_projection_for_workspace(registry, str(resolved_workspace_root))),
         )
 
     return (

@@ -11,8 +11,8 @@ from typing import Any
 from proxy_platform.inventory import load_host_registry
 from proxy_platform.manifest import ManifestError
 from proxy_platform.manifest import PlatformManifest
-from proxy_platform.projections import build_host_views
-from proxy_platform.projections import build_subscription_projection
+from proxy_platform.projections import build_host_views_for_workspace
+from proxy_platform.projections import build_subscription_projection_for_workspace
 
 
 class PublicStateError(ValueError):
@@ -38,8 +38,8 @@ def export_public_state(
     resolved_workspace_root = Path(workspace_root).resolve()
     resolved_output_root = Path(output_root).resolve()
     registry = load_host_registry(manifest.host_registry, resolved_workspace_root)
-    host_views = build_host_views(registry)
-    subscription_projection = build_subscription_projection(registry)
+    host_views = build_host_views_for_workspace(registry, str(resolved_workspace_root))
+    subscription_projection = build_subscription_projection_for_workspace(registry, str(resolved_workspace_root))
     generated_at = _isoformat_now()
 
     host_console_payload = {
@@ -53,6 +53,8 @@ def export_public_state(
                 "observed_health": item.observed_health,
                 "should_publish": item.should_publish,
                 "publish_reason": item.publish_reason,
+                "availability_status": item.availability_status,
+                "unavailable_since": item.unavailable_since,
             }
             for item in host_views
         ],
@@ -72,6 +74,15 @@ def export_public_state(
                 "hiddify_import_url": item.hiddify_import_url,
             }
             for item in subscription_projection.per_node
+        ],
+        "excluded_availability": [
+            {
+                "name": item.name,
+                "alias": item.alias,
+                "unavailable_since": item.unavailable_since,
+                "detail": item.detail,
+            }
+            for item in subscription_projection.excluded_availability
         ],
     }
 
