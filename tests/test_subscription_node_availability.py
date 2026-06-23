@@ -76,12 +76,11 @@ nodes:
         """
 profile_name: Test
 subscription_base_url: https://example.com/subscriptions
-hiddify_fragment_name: Test
 remote_profile_name: Test Remote
 update_interval_hours: 12
 failover_priority: [node_a, node_b]
 availability_policy:
-  probe_port_offset: 1
+  probe_port_offset: 3
   exclude_after_hours: 72
   min_published_nodes: 1
   probe_timeout_seconds: 0.1
@@ -148,6 +147,95 @@ def test_subscription_eligible_keeps_pending_node_before_72h(tmp_path: Path) -> 
     assert report.pending == ["node_b"]
 
 
+def test_ops_publishable_nodes_include_only_currently_healthy_nodes(tmp_path: Path) -> None:
+    module = _load_ops_availability_module()
+    repo_root = _write_ops_fixture(
+        tmp_path,
+        ledger={
+            "updated_at": "2026-06-07T00:00:00Z",
+            "nodes": {
+                "node_a": {
+                    "last_probe_at": "2026-06-07T00:00:00Z",
+                    "last_health": "healthy",
+                    "unavailable_since": None,
+                    "last_success_at": "2026-06-07T00:00:00Z",
+                    "detail": "tcp ok",
+                },
+                "node_b": {
+                    "last_probe_at": "2026-06-07T00:00:00Z",
+                    "last_health": "down",
+                    "unavailable_since": "2026-06-06T00:00:00Z",
+                    "detail": "tcp failed",
+                },
+            },
+        },
+    )
+
+    publishable = module.subscription_publishable_nodes(repo_root)
+
+    assert [node["name"] for node in publishable] == ["node_a"]
+
+
+def test_ops_probe_policy_defaults_to_published_vless_port_offset(tmp_path: Path) -> None:
+    module = _load_ops_availability_module()
+    repo_root = _write_ops_fixture(tmp_path)
+
+    policy = module.load_availability_policy(repo_root)
+
+    assert policy.probe_port_offset == 3
+    assert policy.probe_method == "mihomo_openai_http"
+    assert policy.openai_probe_url == "https://api.openai.com/v1/models"
+    assert 401 in policy.openai_expected_statuses
+
+
+def test_probe_nodes_requires_real_proxy_success_even_when_tcp_connects(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_ops_availability_module()
+    repo_root = _write_ops_fixture(tmp_path)
+    calls: list[tuple[str, int]] = []
+
+    def fake_tcp_probe(*, host: str, port: int, timeout_seconds: float):
+        calls.append((host, port))
+        return True, f"tcp connect ok {host}:{port}"
+
+    def fake_proxy_probe(*, repo_root: Path, node: dict, policy):
+        return False, "openai proxy http failed status=000"
+
+    monkeypatch.setattr(module, "_tcp_probe", fake_tcp_probe)
+    monkeypatch.setattr(module, "_probe_node_through_mihomo", fake_proxy_probe)
+
+    results = module.probe_nodes(repo_root)
+
+    assert calls == [("127.0.0.1", 10003), ("127.0.0.2", 10003)]
+    assert [result.health for result in results] == ["down", "down"]
+    assert all("tcp=ok" in result.detail for result in results)
+    assert all("proxy=failed" in result.detail for result in results)
+
+
+def test_probe_nodes_marks_node_healthy_only_after_openai_http_proxy_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_ops_availability_module()
+    repo_root = _write_ops_fixture(tmp_path)
+
+    def fake_tcp_probe(*, host: str, port: int, timeout_seconds: float):
+        return True, f"tcp connect ok {host}:{port}"
+
+    def fake_proxy_probe(*, repo_root: Path, node: dict, policy):
+        if node["name"] == "node_a":
+            return True, "openai proxy http status=401"
+        return False, "openai proxy http status=000"
+
+    monkeypatch.setattr(module, "_tcp_probe", fake_tcp_probe)
+    monkeypatch.setattr(module, "_probe_node_through_mihomo", fake_proxy_probe)
+
+    ledger = module.update_ledger(repo_root, module.probe_nodes(repo_root))
+    publishable = module.subscription_publishable_nodes(repo_root, ledger=ledger)
+
+    assert ledger["nodes"]["node_a"]["last_health"] == "healthy"
+    assert ledger["nodes"]["node_b"]["last_health"] == "down"
+    assert [node["name"] for node in publishable] == ["node_a"]
+
+
 def test_subscription_eligible_respects_exempt_flag(tmp_path: Path) -> None:
     module = _load_ops_availability_module()
     four_days_ago = (datetime.now(timezone.utc) - timedelta(days=4)).isoformat().replace("+00:00", "Z")
@@ -192,7 +280,60 @@ def test_ensure_minimum_published_nodes_fail_fast(tmp_path: Path) -> None:
     )
 
     with pytest.raises(RuntimeError, match="subscription availability gate failed"):
-        module.ensure_minimum_published_nodes(repo_root, module.subscription_eligible_nodes(repo_root))
+        module.ensure_minimum_published_nodes(repo_root, module.subscription_publishable_nodes(repo_root))
+
+
+def test_write_generated_artifacts_fails_fast_when_all_real_proxy_probes_fail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    render_path = (
+        Path(__file__).resolve().parents[1]
+        / "repos"
+        / "proxy_ops_private"
+        / "scripts"
+        / "render_artifacts.py"
+    )
+    spec = importlib.util.spec_from_file_location("render_artifacts_fail_fast_test_module", render_path)
+    assert spec is not None and spec.loader is not None
+    render_artifacts = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(render_artifacts)
+
+    repo_root = _write_ops_fixture(
+        tmp_path,
+        ledger={
+            "updated_at": "2026-06-23T00:00:00Z",
+            "nodes": {
+                "node_a": {
+                    "last_health": "down",
+                    "unavailable_since": "2026-06-23T00:00:00Z",
+                    "detail": "tcp=ok; proxy=failed",
+                },
+                "node_b": {
+                    "last_health": "down",
+                    "unavailable_since": "2026-06-23T00:00:00Z",
+                    "detail": "tcp=ok; proxy=failed",
+                },
+            },
+        },
+    )
+    (repo_root / "secrets" / "nodes").mkdir(parents=True)
+    for node_name in ("node_a", "node_b"):
+        (repo_root / "secrets" / "nodes" / f"{node_name}.env").write_text(
+            "\n".join(
+                [
+                    "VLESS_UUID=46e1f1cc-6476-4fbc-b25d-969fa643c816",
+                    "REALITY_PUBLIC_KEY=public-key",
+                    "REALITY_SHORT_ID=0123456789abcdef",
+                    "REALITY_SERVER_NAMES=www.microsoft.com",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+    monkeypatch.setenv("SKIP_AVAILABILITY_PROBE", "1")
+
+    with pytest.raises(RuntimeError, match="eligible_nodes=0 < min_published_nodes=1"):
+        render_artifacts.write_generated_artifacts(repo_root)
 
 
 def test_platform_projection_excludes_unavailable_node(tmp_path: Path) -> None:
@@ -231,7 +372,6 @@ nodes:
         """
 profile_name: GG Proxy Nodes
 subscription_base_url: https://example.com/subscriptions
-hiddify_fragment_name: GG Proxy Nodes
 remote_profile_name: GG Proxy Nodes Remote
 update_interval_hours: 12
 failover_priority: [lisahost, vmrack1]

@@ -5,8 +5,8 @@ browser routing.
 Run from an elevated PowerShell session. This script deliberately does not add
 PROCESS-NAME rules for simprint.exe, simprint-runtime.exe, or msedgewebview2.exe.
 Only reviewed app install paths may use process-level PROXY: Simprint's Chrome
-profile browser, Antigravity, ChatGPT, ChatGPT Atlas, and Codex. Comment those
-lines out in the profile to route an app by destination rules only.
+profile browser and Antigravity. Official OpenAI/ChatGPT/Codex destinations are
+proxied by domain rules; OpenAI-family desktop app paths stay DIRECT fallback.
 #>
 
 [CmdletBinding()]
@@ -31,34 +31,6 @@ function Write-Section {
     param([string]$Title)
     Write-Host ''
     Write-Host "=== $Title ==="
-}
-
-function Get-ProxyClientUninstallEntries {
-    $roots = @(
-        'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
-        'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
-        'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*'
-    )
-    Get-ItemProperty -Path $roots -ErrorAction SilentlyContinue |
-        Where-Object {
-            $_.DisplayName -match 'Hiddify|ProxyBridge' -or
-            $_.InstallLocation -match 'Hiddify|ProxyBridge' -or
-            $_.UninstallString -match 'Hiddify|ProxyBridge'
-        } |
-        Select-Object DisplayName, DisplayVersion, Publisher, InstallLocation, UninstallString
-}
-
-function Get-ProxyClientAppxPackages {
-    try {
-        return @(Get-AppxPackage -AllUsers -ErrorAction Stop | Where-Object {
-            $_.Name -match 'Hiddify|ProxyBridge' -or $_.PackageFullName -match 'Hiddify|ProxyBridge'
-        })
-    } catch {
-        Write-Warning "AllUsers Appx query failed, falling back to current user: $($_.Exception.Message)"
-        return @(Get-AppxPackage -ErrorAction SilentlyContinue | Where-Object {
-            $_.Name -match 'Hiddify|ProxyBridge' -or $_.PackageFullName -match 'Hiddify|ProxyBridge'
-        })
-    }
 }
 
 function Assert-NoProcessProxyRules {
@@ -119,32 +91,54 @@ function Test-AllowedProcessProxyRule {
         'C:\Program Files\Google\Antigravity\*',
         'C:\Program Files\Google\Antigravity*\*',
         'C:\Users\*\AppData\Local\Programs\Antigravity\*',
-        'C:\Users\*\AppData\Local\OpenAI\Codex\bin\*\codex.exe',
-        'C:\Program Files\WindowsApps\OpenAI.Codex_*\app\*',
-        'C:\Program Files\OpenAI\ChatGPT\*',
-        'C:\Users\*\AppData\Local\Programs\ChatGPT\*',
-        'C:\Program Files\OpenAI\ChatGPT Atlas\*',
-        'C:\Users\*\AppData\Local\Programs\ChatGPT Atlas\*',
         '/Applications/Antigravity.app/Contents/*',
-        '/Applications/ChatGPT.app/Contents/*',
-        '/Applications/ChatGPT Atlas.app/Contents/*',
-        '/Applications/Codex.app/Contents/*',
         '/Users/*/Applications/Antigravity.app/Contents/*',
-        '/Users/*/Applications/ChatGPT.app/Contents/*',
-        '/Users/*/Applications/ChatGPT Atlas.app/Contents/*',
-        '/Users/*/Applications/Codex.app/Contents/*',
         '/opt/Antigravity/*',
         '/opt/antigravity/*',
-        '/usr/bin/antigravity*',
-        '/opt/chatgpt/*',
-        '/usr/bin/chatgpt*',
-        '/opt/chatgpt-atlas/*',
-        '/usr/bin/chatgpt-atlas*',
-        '/usr/bin/chatgptatlas*',
-        '/opt/codex/*',
-        '/usr/bin/codex'
+        '/usr/bin/antigravity*'
     )
     return $allowedPayloads -contains $Payload
+}
+
+function Get-ExpectedOpenAIDomainProxyPayloads {
+    return @(
+        'openai.com',
+        'chatgpt.com',
+        'oaistatic.com',
+        'oaiusercontent.com',
+        'oaistatsig.com',
+        'auth.openai.com',
+        'auth0.openai.com',
+        'cdn.openaimerge.com'
+    )
+}
+
+function Assert-OpenAIDomainProxyGuardrails {
+    param(
+        [Parameter(Mandatory)] [string]$Source,
+        [Parameter(Mandatory)] [array]$Rules
+    )
+
+    $expectedPayloads = Get-ExpectedOpenAIDomainProxyPayloads
+    $domainProxyRules = @($Rules | Where-Object {
+        $_.proxy -eq 'PROXY' -and
+        ($_.type -eq 'DomainSuffix' -or $_.type -eq 'DOMAIN-SUFFIX') -and
+        ($expectedPayloads -contains [string]$_.payload)
+    })
+    $forbiddenKeywordRules = @($Rules | Where-Object {
+        ($_.type -eq 'DomainKeyword' -or $_.type -eq 'DOMAIN-KEYWORD') -and
+        ([string]$_.payload).ToLowerInvariant() -in @('openai', 'codex', 'openaiapi')
+    })
+
+    Write-Host "${Source}_openai_domain_proxy_count=$($domainProxyRules.Count)"
+    Write-Host "${Source}_forbidden_openai_keyword_count=$($forbiddenKeywordRules.Count)"
+    if ($domainProxyRules.Count -ne $expectedPayloads.Count) {
+        throw "${Source} missing official OpenAI domain PROXY rules: found $($domainProxyRules.Count), expected $($expectedPayloads.Count)"
+    }
+    if ($forbiddenKeywordRules.Count -gt 0) {
+        $forbiddenKeywordRules | Select-Object index, type, payload, proxy | Format-Table -AutoSize
+        throw "${Source} contains forbidden broad OpenAI keyword rules"
+    }
 }
 
 Assert-Administrator
@@ -154,47 +148,12 @@ if (-not $WorkspaceRoot) {
 }
 Set-Location -LiteralPath $WorkspaceRoot
 
-Write-Section 'Hiddify / ProxyBridge uninstall verification'
-$entries = @(Get-ProxyClientUninstallEntries)
-if ($entries.Count -eq 0) {
-    Write-Host 'uninstall_entries=none'
-} else {
-    $entries | Format-Table -AutoSize
-    Write-Warning 'Uninstall entries still exist. Run the listed UninstallString manually if these are not intentional.'
-}
-
-$appx = @(Get-ProxyClientAppxPackages)
-if ($appx.Count -eq 0) {
-    Write-Host 'appx_packages=none'
-} else {
-    $appx | Select-Object Name, PackageFullName, InstallLocation | Format-Table -AutoSize
-}
-
-$leftovers = @(
-    'C:\Program Files\ProxyBridge',
-    "$env:APPDATA\ProxyBridge",
-    "$env:APPDATA\Hiddify",
-    'C:\Program Files\Hiddify',
-    'C:\Program Files (x86)\Hiddify'
-) | ForEach-Object {
-    [pscustomobject]@{ Path = $_; Exists = (Test-Path -LiteralPath $_) }
-}
-$leftovers | Format-Table -AutoSize
-
-Get-Process | Where-Object { $_.ProcessName -match 'hiddify|proxybridge' } |
-    Select-Object Id, ProcessName, Path |
-    Format-Table -AutoSize
-
-if ($IncludeWingetCheck) {
-    Write-Section 'winget check'
-    winget list --accept-source-agreements | Select-String -Pattern 'Hiddify|ProxyBridge'
-}
-
 Write-Section 'Refresh mihomo SYSTEM TUN runtime'
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows\apply-mihomo-routing-policy-admin.ps1
 
 Write-Section 'Runtime process proxy guardrails'
 Assert-NoProcessProxyRules
+Assert-OpenAIDomainProxyGuardrails -Source 'runtime' -Rules ((Invoke-RestMethod -Uri 'http://127.0.0.1:9090/rules' -TimeoutSec 10).rules)
 
 Write-Section 'Simprint process tree'
 Get-CimInstance Win32_Process |

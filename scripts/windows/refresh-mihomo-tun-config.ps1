@@ -76,32 +76,70 @@ try {
             'C:\Program Files\Google\Antigravity\*',
             'C:\Program Files\Google\Antigravity*\*',
             'C:\Users\*\AppData\Local\Programs\Antigravity\*',
-            'C:\Users\*\AppData\Local\OpenAI\Codex\bin\*\codex.exe',
-            'C:\Program Files\WindowsApps\OpenAI.Codex_*\app\*',
-            'C:\Program Files\OpenAI\ChatGPT\*',
-            'C:\Users\*\AppData\Local\Programs\ChatGPT\*',
-            'C:\Program Files\OpenAI\ChatGPT Atlas\*',
-            'C:\Users\*\AppData\Local\Programs\ChatGPT Atlas\*',
             '/Applications/Antigravity.app/Contents/*',
-            '/Applications/ChatGPT.app/Contents/*',
-            '/Applications/ChatGPT Atlas.app/Contents/*',
-            '/Applications/Codex.app/Contents/*',
             '/Users/*/Applications/Antigravity.app/Contents/*',
-            '/Users/*/Applications/ChatGPT.app/Contents/*',
-            '/Users/*/Applications/ChatGPT Atlas.app/Contents/*',
-            '/Users/*/Applications/Codex.app/Contents/*',
             '/opt/Antigravity/*',
             '/opt/antigravity/*',
-            '/usr/bin/antigravity*',
-            '/opt/chatgpt/*',
-            '/usr/bin/chatgpt*',
-            '/opt/chatgpt-atlas/*',
-            '/usr/bin/chatgpt-atlas*',
-            '/usr/bin/chatgptatlas*',
-            '/opt/codex/*',
-            '/usr/bin/codex'
+            '/usr/bin/antigravity*'
         )
         return $allowedPayloads -contains $Payload
+    }
+
+    function Get-ExpectedOpenAIDomainProxyPayloads {
+        return @(
+            'openai.com',
+            'chatgpt.com',
+            'oaistatic.com',
+            'oaiusercontent.com',
+            'oaistatsig.com',
+            'auth.openai.com',
+            'auth0.openai.com',
+            'cdn.openaimerge.com'
+        )
+    }
+
+    function Convert-ConfigRuleLines {
+        param([Parameter(Mandatory)] [string]$Path)
+
+        return @(
+            Select-String -Path $Path -Pattern '^\s*-\s*([^,]+),(.+),([^,]+)\s*$' -ErrorAction SilentlyContinue |
+                ForEach-Object {
+                    [pscustomobject]@{
+                        index = $_.LineNumber
+                        type = $_.Matches[0].Groups[1].Value
+                        payload = $_.Matches[0].Groups[2].Value
+                        proxy = $_.Matches[0].Groups[3].Value
+                    }
+                }
+        )
+    }
+
+    function Assert-OpenAIDomainProxyGuardrails {
+        param(
+            [Parameter(Mandatory)] [string]$Source,
+            [Parameter(Mandatory)] [array]$Rules
+        )
+
+        $expectedPayloads = Get-ExpectedOpenAIDomainProxyPayloads
+        $domainProxyRules = @($Rules | Where-Object {
+            $_.proxy -eq 'PROXY' -and
+            ($_.type -eq 'DomainSuffix' -or $_.type -eq 'DOMAIN-SUFFIX') -and
+            ($expectedPayloads -contains [string]$_.payload)
+        })
+        $forbiddenKeywordRules = @($Rules | Where-Object {
+            ($_.type -eq 'DomainKeyword' -or $_.type -eq 'DOMAIN-KEYWORD') -and
+            ([string]$_.payload).ToLowerInvariant() -in @('openai', 'codex', 'openaiapi')
+        })
+
+        Write-Host "${Source}_openai_domain_proxy_count=$($domainProxyRules.Count)"
+        Write-Host "${Source}_forbidden_openai_keyword_count=$($forbiddenKeywordRules.Count)"
+        if ($domainProxyRules.Count -ne $expectedPayloads.Count) {
+            throw "${Source} missing official OpenAI domain PROXY rules: found $($domainProxyRules.Count), expected $($expectedPayloads.Count)"
+        }
+        if ($forbiddenKeywordRules.Count -gt 0) {
+            $forbiddenKeywordRules | Select-Object index, type, payload, proxy | Format-Table -AutoSize
+            throw "${Source} contains forbidden broad OpenAI keyword rules"
+        }
     }
 
     Assert-Administrator
@@ -116,6 +154,7 @@ try {
     $safeDir = Split-Path -Parent $SafeConfigPath
     New-Item -ItemType Directory -Path $safeDir -Force | Out-Null
     Copy-Item -LiteralPath $SourceConfigPath -Destination $SafeConfigPath -Force
+    Assert-OpenAIDomainProxyGuardrails -Source 'file' -Rules (Convert-ConfigRuleLines -Path $SafeConfigPath)
 
     Write-Host "Validating config: $SafeConfigPath"
     & $MihomoExe -t -f $SafeConfigPath
@@ -129,7 +168,12 @@ try {
     $action = New-ScheduledTaskAction -Execute $MihomoExe -Argument "-f `"$SafeConfigPath`"" -WorkingDirectory (Split-Path -Parent $MihomoExe)
     $trigger = New-ScheduledTaskTrigger -AtStartup
     $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -RunLevel Highest
-    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+    $settings = New-ScheduledTaskSettingsSet `
+        -AllowStartIfOnBatteries `
+        -DontStopIfGoingOnBatteries `
+        -ExecutionTimeLimit (New-TimeSpan -Seconds 0) `
+        -RestartCount 3 `
+        -RestartInterval (New-TimeSpan -Minutes 1)
 
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
     Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings | Out-Null
@@ -148,6 +192,8 @@ try {
     Write-Host "runtime_disallowed_process_proxy_count=$($summary.runtime_disallowed_process_proxy_count)"
     $summary.allowed_rules | Select-Object index, type, payload, proxy | Format-Table -AutoSize
     $summary.bad_rules | Select-Object index, type, payload, proxy | Format-Table -AutoSize
+    $runtimeRules = (Invoke-RestMethod -Uri 'http://127.0.0.1:9090/rules' -Method Get -TimeoutSec 10).rules
+    Assert-OpenAIDomainProxyGuardrails -Source 'runtime' -Rules $runtimeRules
 
     if ($summary.runtime_match_proxy -ne 'PROXY') {
         throw "runtime MATCH rule is $($summary.runtime_match_proxy), expected PROXY"

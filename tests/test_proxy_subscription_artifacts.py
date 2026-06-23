@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -13,6 +14,45 @@ ROOT = Path(__file__).resolve().parents[1]
 PRIVATE_ROOT = ROOT / "repos" / "proxy_ops_private"
 SCRIPT_PATH = PRIVATE_ROOT / "scripts" / "render_artifacts.py"
 
+OPENAI_PROXY_DOMAIN_RULES = [
+    "DOMAIN-SUFFIX,openai.com,PROXY",
+    "DOMAIN-SUFFIX,chatgpt.com,PROXY",
+    "DOMAIN-SUFFIX,oaistatic.com,PROXY",
+    "DOMAIN-SUFFIX,oaiusercontent.com,PROXY",
+    "DOMAIN-SUFFIX,oaistatsig.com,PROXY",
+    "DOMAIN-SUFFIX,auth.openai.com,PROXY",
+    "DOMAIN-SUFFIX,auth0.openai.com,PROXY",
+    "DOMAIN-SUFFIX,cdn.openaimerge.com,PROXY",
+]
+
+OPENAI_APP_PROCESS_DIRECT_RULES = [
+    r"PROCESS-PATH-WILDCARD,C:\Users\*\AppData\Local\OpenAI\Codex\bin\*\codex.exe,DIRECT",
+    r"PROCESS-PATH-WILDCARD,C:\Program Files\WindowsApps\OpenAI.Codex_*\app\*,DIRECT",
+    r"PROCESS-PATH-WILDCARD,C:\Program Files\OpenAI\ChatGPT\*,DIRECT",
+    r"PROCESS-PATH-WILDCARD,C:\Users\*\AppData\Local\Programs\ChatGPT\*,DIRECT",
+    r"PROCESS-PATH-WILDCARD,C:\Program Files\OpenAI\ChatGPT Atlas\*,DIRECT",
+    r"PROCESS-PATH-WILDCARD,C:\Users\*\AppData\Local\Programs\ChatGPT Atlas\*,DIRECT",
+    "PROCESS-PATH-WILDCARD,/Applications/ChatGPT.app/Contents/*,DIRECT",
+    "PROCESS-PATH-WILDCARD,/Applications/ChatGPT Atlas.app/Contents/*,DIRECT",
+    "PROCESS-PATH-WILDCARD,/Applications/Codex.app/Contents/*,DIRECT",
+    "PROCESS-PATH-WILDCARD,/Users/*/Applications/ChatGPT.app/Contents/*,DIRECT",
+    "PROCESS-PATH-WILDCARD,/Users/*/Applications/ChatGPT Atlas.app/Contents/*,DIRECT",
+    "PROCESS-PATH-WILDCARD,/Users/*/Applications/Codex.app/Contents/*,DIRECT",
+    "PROCESS-PATH-WILDCARD,/opt/chatgpt/*,DIRECT",
+    "PROCESS-PATH-WILDCARD,/usr/bin/chatgpt*,DIRECT",
+    "PROCESS-PATH-WILDCARD,/opt/chatgpt-atlas/*,DIRECT",
+    "PROCESS-PATH-WILDCARD,/usr/bin/chatgpt-atlas*,DIRECT",
+    "PROCESS-PATH-WILDCARD,/usr/bin/chatgptatlas*,DIRECT",
+    "PROCESS-PATH-WILDCARD,/opt/codex/*,DIRECT",
+    "PROCESS-PATH,/usr/bin/codex,DIRECT",
+]
+
+FORBIDDEN_OPENAI_KEYWORD_RULES = [
+    "DOMAIN-KEYWORD,openai",
+    "DOMAIN-KEYWORD,codex",
+    "DOMAIN-KEYWORD,openaiapi",
+]
+
 
 def load_render_artifacts_module():
     spec = importlib.util.spec_from_file_location("render_artifacts", SCRIPT_PATH)
@@ -23,10 +63,38 @@ def load_render_artifacts_module():
     return module
 
 
-def test_mihomo_universal_config_uses_mainland_split_without_ai_proxy_group() -> None:
-    render_artifacts = load_render_artifacts_module()
+def copy_private_fixture(tmp_path: Path, *, healthy_names: tuple[str, ...] = ("us_sea_bgp_01", "vmrack1", "dedirock")) -> Path:
+    fixture_root = tmp_path / "proxy_ops_private"
+    shutil.copytree(PRIVATE_ROOT / "inventory", fixture_root / "inventory")
+    shutil.copytree(PRIVATE_ROOT / "secrets", fixture_root / "secrets")
+    (fixture_root / "state").mkdir(parents=True)
+    (fixture_root / "state" / "node_availability.json").write_text(
+        json.dumps(
+            {
+                "updated_at": "2026-06-23T00:00:00Z",
+                "nodes": {
+                    name: {
+                        "last_probe_at": "2026-06-23T00:00:00Z",
+                        "last_health": "healthy",
+                        "unavailable_since": None,
+                        "last_success_at": "2026-06-23T00:00:00Z",
+                        "detail": "fixture real proxy probe passed",
+                    }
+                    for name in healthy_names
+                },
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return fixture_root
 
-    config_text = render_artifacts.render_mihomo_config(PRIVATE_ROOT, platform="universal")
+
+def test_mihomo_universal_config_uses_mainland_split_without_ai_proxy_group(tmp_path: Path) -> None:
+    render_artifacts = load_render_artifacts_module()
+    fixture_root = copy_private_fixture(tmp_path)
+
+    config_text = render_artifacts.render_mihomo_config(fixture_root, platform="universal")
     config = yaml.safe_load(config_text)
     rule_text = "\n".join(config["rules"])
     proxy_groups = {group["name"]: group for group in config["proxy-groups"]}
@@ -51,10 +119,11 @@ def test_mihomo_universal_config_uses_mainland_split_without_ai_proxy_group() ->
     assert config["rules"][-1] == "MATCH,PROXY"
 
 
-def test_mihomo_universal_config_directs_cursor_domains_before_process_rules() -> None:
+def test_mihomo_universal_config_directs_cursor_domains_before_process_rules(tmp_path: Path) -> None:
     render_artifacts = load_render_artifacts_module()
+    fixture_root = copy_private_fixture(tmp_path)
 
-    config = yaml.safe_load(render_artifacts.render_mihomo_config(PRIVATE_ROOT, platform="universal"))
+    config = yaml.safe_load(render_artifacts.render_mihomo_config(fixture_root, platform="universal"))
     rules = config["rules"]
 
     expected_cursor_rules = [
@@ -67,6 +136,8 @@ def test_mihomo_universal_config_directs_cursor_domains_before_process_rules() -
         "DOMAIN-SUFFIX,anysphere.inc,DIRECT",
     ]
     assert rules[: len(expected_cursor_rules)] == expected_cursor_rules
+    openai_start = len(expected_cursor_rules)
+    assert rules[openai_start : openai_start + len(OPENAI_PROXY_DOMAIN_RULES)] == OPENAI_PROXY_DOMAIN_RULES
     expected_wps_domain_rules = [
         "DOMAIN-KEYWORD,kingsoft,DIRECT",
         "DOMAIN-SUFFIX,kingsoft.com,DIRECT",
@@ -80,26 +151,32 @@ def test_mihomo_universal_config_directs_cursor_domains_before_process_rules() -
         "DOMAIN-SUFFIX,ksord.com,DIRECT",
         "DOMAIN-SUFFIX,wpsplus.com,DIRECT",
     ]
-    wps_start = len(expected_cursor_rules)
+    wps_start = len(expected_cursor_rules) + len(OPENAI_PROXY_DOMAIN_RULES)
     assert rules[wps_start : wps_start + len(expected_wps_domain_rules)] == expected_wps_domain_rules
     first_process_rule = next(i for i, rule in enumerate(rules) if rule.startswith("PROCESS-"))
     first_process_proxy_rule = next(i for i, rule in enumerate(rules) if rule.startswith("PROCESS-") and rule.endswith(",PROXY"))
     first_proxy_ruleset = rules.index("RULE-SET,proxy,PROXY")
     assert all(rules.index(rule) < first_process_rule for rule in expected_cursor_rules)
+    assert all(rules.index(rule) < first_process_rule for rule in OPENAI_PROXY_DOMAIN_RULES)
     assert all(rules.index(rule) < first_process_rule for rule in expected_wps_domain_rules)
     assert all(rules.index(rule) < first_process_proxy_rule for rule in expected_cursor_rules)
+    assert all(rules.index(rule) < first_process_proxy_rule for rule in OPENAI_PROXY_DOMAIN_RULES)
     assert all(rules.index(rule) < first_process_proxy_rule for rule in expected_wps_domain_rules)
     assert all(rules.index(rule) < first_proxy_ruleset for rule in expected_cursor_rules)
+    assert all(rules.index(rule) < first_proxy_ruleset for rule in OPENAI_PROXY_DOMAIN_RULES)
     assert all(rules.index(rule) < first_proxy_ruleset for rule in expected_wps_domain_rules)
+    assert not any(any(rule.startswith(forbidden) for forbidden in FORBIDDEN_OPENAI_KEYWORD_RULES) for rule in rules)
 
 
-def test_mihomo_config_uses_dustinwin_tun_and_direct_process_protections() -> None:
+def test_mihomo_config_uses_dustinwin_tun_and_direct_process_protections(tmp_path: Path) -> None:
     render_artifacts = load_render_artifacts_module()
+    fixture_root = copy_private_fixture(tmp_path)
 
-    config = yaml.safe_load(render_artifacts.render_mihomo_config(PRIVATE_ROOT, platform="windows"))
+    config = yaml.safe_load(render_artifacts.render_mihomo_config(fixture_root, platform="windows"))
 
     assert config["mode"] == "rule"
     assert config["find-process-mode"] == "always"
+    assert config["external-ui"] == "ui"
     assert config["geodata-mode"] is False
     assert config["tun"]["enable"] is True
     assert config["tun"]["auto-route"] is True
@@ -138,12 +215,23 @@ def test_mihomo_config_uses_dustinwin_tun_and_direct_process_protections() -> No
     assert r"PROCESS-PATH-WILDCARD,C:\Program Files\Google\Antigravity\*,PROXY" in rule_text
     assert r"PROCESS-PATH-WILDCARD,C:\Program Files\Google\Antigravity*\*,PROXY" in rule_text
     assert r"PROCESS-PATH-WILDCARD,C:\Users\*\AppData\Local\Programs\Antigravity\*,PROXY" in rule_text
-    assert r"PROCESS-PATH-WILDCARD,C:\Users\*\AppData\Local\OpenAI\Codex\bin\*\codex.exe,PROXY" in rule_text
-    assert r"PROCESS-PATH-WILDCARD,C:\Program Files\WindowsApps\OpenAI.Codex_*\app\*,PROXY" in rule_text
-    assert r"PROCESS-PATH-WILDCARD,C:\Program Files\OpenAI\ChatGPT\*,PROXY" in rule_text
-    assert r"PROCESS-PATH-WILDCARD,C:\Users\*\AppData\Local\Programs\ChatGPT\*,PROXY" in rule_text
-    assert r"PROCESS-PATH-WILDCARD,C:\Program Files\OpenAI\ChatGPT Atlas\*,PROXY" in rule_text
-    assert r"PROCESS-PATH-WILDCARD,C:\Users\*\AppData\Local\Programs\ChatGPT Atlas\*,PROXY" in rule_text
+    assert r"PROCESS-PATH-WILDCARD,C:\Users\*\AppData\Local\OpenAI\Codex\bin\*\codex.exe,DIRECT" in rule_text
+    assert r"PROCESS-PATH-WILDCARD,C:\Program Files\WindowsApps\OpenAI.Codex_*\app\*,DIRECT" in rule_text
+    assert r"PROCESS-PATH-WILDCARD,C:\Program Files\OpenAI\ChatGPT\*,DIRECT" in rule_text
+    assert r"PROCESS-PATH-WILDCARD,C:\Users\*\AppData\Local\Programs\ChatGPT\*,DIRECT" in rule_text
+    assert r"PROCESS-PATH-WILDCARD,C:\Program Files\OpenAI\ChatGPT Atlas\*,DIRECT" in rule_text
+    assert r"PROCESS-PATH-WILDCARD,C:\Users\*\AppData\Local\Programs\ChatGPT Atlas\*,DIRECT" in rule_text
+    assert r"PROCESS-PATH-WILDCARD,C:\Users\*\AppData\Local\OpenAI\Codex\bin\*\codex.exe,PROXY" not in rule_text
+    assert r"PROCESS-PATH-WILDCARD,C:\Program Files\WindowsApps\OpenAI.Codex_*\app\*,PROXY" not in rule_text
+    assert r"PROCESS-PATH-WILDCARD,C:\Program Files\OpenAI\ChatGPT\*,PROXY" not in rule_text
+    assert r"PROCESS-PATH-WILDCARD,C:\Users\*\AppData\Local\Programs\ChatGPT\*,PROXY" not in rule_text
+    assert r"PROCESS-PATH-WILDCARD,C:\Program Files\OpenAI\ChatGPT Atlas\*,PROXY" not in rule_text
+    assert r"PROCESS-PATH-WILDCARD,C:\Users\*\AppData\Local\Programs\ChatGPT Atlas\*,PROXY" not in rule_text
+    for rule in OPENAI_PROXY_DOMAIN_RULES:
+        assert rule in config["rules"]
+        assert config["rules"].index(rule) < config["rules"].index(
+            r"PROCESS-PATH-WILDCARD,C:\Users\*\AppData\Local\OpenAI\Codex\bin\*\codex.exe,DIRECT"
+        )
     assert "PROCESS-NAME,simprint.exe,PROXY" not in rule_text
     assert "PROCESS-NAME,simprint-runtime.exe,PROXY" not in rule_text
     assert "PROCESS-NAME,msedgewebview2.exe,PROXY" not in rule_text
@@ -154,10 +242,6 @@ def test_mihomo_config_uses_dustinwin_tun_and_direct_process_protections() -> No
     allowed_process_proxy_fragments = (
         "Simprint",
         "Antigravity",
-        "OpenAI\\Codex",
-        "OpenAI.Codex_",
-        "OpenAI\\ChatGPT",
-        "ChatGPT",
     )
     bad_process_proxy_rules = [
         rule
@@ -169,10 +253,36 @@ def test_mihomo_config_uses_dustinwin_tun_and_direct_process_protections() -> No
     assert rule_text.index("RULE-SET,cn,DIRECT") < rule_text.index("RULE-SET,proxy,PROXY")
 
 
-def test_mihomo_universal_config_marks_direct_process_rules_as_user_editable() -> None:
+def test_openai_family_routing_is_domain_proxy_with_process_direct_fallback(tmp_path: Path) -> None:
     render_artifacts = load_render_artifacts_module()
+    fixture_root = copy_private_fixture(tmp_path)
 
-    rendered = render_artifacts.render_mihomo_config(PRIVATE_ROOT, platform="universal")
+    config = yaml.safe_load(render_artifacts.render_mihomo_config(fixture_root, platform="universal"))
+    rules = config["rules"]
+    rule_text = "\n".join(rules)
+
+    for rule in OPENAI_PROXY_DOMAIN_RULES:
+        assert rule in rules
+    assert not any(any(rule.startswith(forbidden) for forbidden in FORBIDDEN_OPENAI_KEYWORD_RULES) for rule in rules)
+
+    first_openai_rule = min(rules.index(rule) for rule in OPENAI_PROXY_DOMAIN_RULES)
+    first_direct_app_rule = min(index for index, rule in enumerate(rules) if rule in OPENAI_APP_PROCESS_DIRECT_RULES)
+    first_proxy_process_rule = min(index for index, rule in enumerate(rules) if rule.startswith("PROCESS-") and rule.endswith(",PROXY"))
+    assert first_openai_rule < first_direct_app_rule < first_proxy_process_rule
+
+    for rule in OPENAI_APP_PROCESS_DIRECT_RULES:
+        assert rule in rules
+        assert f"{rule.removesuffix(',DIRECT')},PROXY" not in rules
+
+    assert "openaiapi" not in rule_text.lower()
+    assert "api.openai-relay.example" not in rule_text
+
+
+def test_mihomo_universal_config_marks_direct_process_rules_as_user_editable(tmp_path: Path) -> None:
+    render_artifacts = load_render_artifacts_module()
+    fixture_root = copy_private_fixture(tmp_path)
+
+    rendered = render_artifacts.render_mihomo_config(fixture_root, platform="universal")
     config = yaml.safe_load(rendered)
 
     assert "# === USER-EDITABLE PROCESS DIRECT PROTECTIONS ===" in rendered
@@ -209,7 +319,11 @@ def test_mihomo_process_notes_describe_mainland_split_policy() -> None:
     assert "Cursor domain rules are the highest-priority DIRECT rules" in notes
     assert "cursor.sh" in notes
     assert "cursorapi.com" in notes
-    assert "Antigravity, ChatGPT, ChatGPT Atlas, Codex, and Simprint Chrome profile paths are default process-level `PROXY` overrides" in notes
+    assert "Official OpenAI / ChatGPT / Codex domains are high-priority `PROXY` rules" in notes
+    assert "OpenAI-family desktop app paths are `DIRECT` fallbacks" in notes
+    assert "Antigravity and Simprint Chrome profile paths are default process-level `PROXY` overrides" in notes
+    assert "DOMAIN-KEYWORD,openai" not in notes
+    assert "DOMAIN-KEYWORD,codex" not in notes
     assert "WPS / Kingsoft domain DIRECT rules" in notes
 
 
@@ -241,9 +355,15 @@ def test_windows_verify_script_checks_mainland_split_without_ai_proxy() -> None:
     assert "verification_verdict=PASS" in script_text
     assert "Test-AllowedProcessProxyRule" in script_text
     assert "PROCESS-(NAME|PATH)" in script_text
+    assert "Assert-OpenAIDomainProxyGuardrails" in script_text
+    assert "openai_domain_proxy_count" in script_text
+    assert "forbidden_openai_keyword_count" in script_text
     assert r"C:\Users\*\Simprint\webview-fixed\*\msedgewebview2.exe" not in script_text
     assert "PROCESS-NAME,simprint.exe,PROXY" not in script_text
     assert "PROCESS-NAME,msedgewebview2.exe,PROXY" not in script_text
+    assert "C:\\Users\\*\\AppData\\Local\\OpenAI\\Codex\\bin\\*\\codex.exe',\n" not in script_text
+    assert "C:\\Program Files\\WindowsApps\\OpenAI.Codex_*\\app\\*',\n" not in script_text
+    assert "C:\\Program Files\\OpenAI\\ChatGPT\\*',\n" not in script_text
 
 
 def test_windows_admin_scripts_allow_only_simprint_browser_proxy_rules() -> None:
@@ -262,10 +382,13 @@ def test_windows_admin_scripts_allow_only_simprint_browser_proxy_rules() -> None
         assert r"C:\Users\*\Simprint\webview-fixed\*\msedgewebview2.exe" not in script_text
         assert "PROCESS-NAME,simprint.exe,PROXY" not in script_text
         assert "PROCESS-NAME,msedgewebview2.exe,PROXY" not in script_text
-        assert r"C:\Program Files\WindowsApps\OpenAI.Codex_*\app\*" in script_text
+        assert "Assert-OpenAIDomainProxyGuardrails" in script_text
+        assert "forbidden_openai_keyword_count" in script_text
+        assert r"C:\Program Files\WindowsApps\OpenAI.Codex_*\app\*" not in script_text
+        assert r"C:\Program Files\OpenAI\ChatGPT\*" not in script_text
         assert r"C:\Program Files\Google\Antigravity\*" in script_text
-        assert "/Applications/Codex.app/Contents/*" in script_text
-        assert "/usr/bin/codex" in script_text
+        assert "/Applications/Codex.app/Contents/*" not in script_text
+        assert "/usr/bin/codex" not in script_text
 
 
 def test_simprint_diagnostic_scripts_keep_qwen_out_and_show_route_details() -> None:
@@ -300,80 +423,6 @@ def test_simprint_cdp_probe_targets_only_launched_chrome_profile_browser() -> No
     assert "ProcessPathWildcard PROXY rule" in script
 
 
-def test_hiddify_proxybridge_cleanup_script_is_scoped_to_named_clients() -> None:
-    script = (ROOT / "scripts" / "windows" / "uninstall-hiddify-proxybridge-admin.ps1").read_text(
-        encoding="utf-8"
-    )
-
-    assert "Assert-Administrator" in script
-    assert "Remove-Item -LiteralPath" in script
-    assert "Refusing to remove path without Hiddify/ProxyBridge marker" in script
-    assert "Hiddify|ProxyBridge|app\\.hiddify\\.com|interceptsuite" in script
-    assert "C:\\ProgramData\\app.hiddify.com" in script
-    assert "ProxyBridge-Rules.json" in script
-    assert "Get-NetTCPConnection" in script
-    assert "12334, 12335" in script
-    assert "mihomo" in script
-    assert "Clash Verge Rev" in script
-    assert "Simprint" in script
-
-
-def test_macos_hiddify_proxybridge_cleanup_script_preserves_system_extension_boundary() -> None:
-    script = (ROOT / "scripts" / "macos" / "uninstall-hiddify-proxybridge.sh").read_text(
-        encoding="utf-8"
-    )
-
-    assert "systemextensionsctl uninstall" in script
-    assert "systemextensionsctl reset" not in script
-    assert "L4HJT32Z59" in script
-    assert "com.interceptsuite.ProxyBridge.extension" in script
-    assert "blocked_by_sip" in script
-    assert "csrutil status" in script
-    assert "networksetup -setwebproxystate" in script
-    assert "networksetup -setsocksfirewallproxystate" in script
-    assert "pkgutil --pkgs" in script
-    assert "pkgutil --forget" in script
-    assert "--forget-receipts" in script
-    assert "receipt_hits" in script
-    assert "has_client_marker" in script
-    assert "refused_path_without_marker" in script
-    assert "/Applications/Hiddify.app" in script
-    assert "/Applications/ProxyBridge.app" in script
-    assert "result=CHECK_SYSTEM_EXTENSION" in script
-
-
-def test_macos_proxybridge_recovery_uninstall_script_is_targeted() -> None:
-    script = (ROOT / "scripts" / "macos" / "recovery-uninstall-proxybridge-system-extension.sh").read_text(
-        encoding="utf-8"
-    )
-
-    assert "L4HJT32Z59" in script
-    assert "com.interceptsuite.ProxyBridge.extension" in script
-    assert "systemextensionsctl uninstall \"$TEAM_ID\" \"$BUNDLE_ID\"" in script
-    assert "systemextensionsctl gc" in script
-    assert "systemextensionsctl reset" not in script
-    assert "csrutil disable" in script
-    assert "csrutil enable" in script
-    assert "result=PASS" in script
-    assert "result=CHECK_SYSTEM_EXTENSION" in script
-
-
-def test_runbook_documents_macos_proxybridge_sip_boundary() -> None:
-    runbook = (ROOT / "docs" / "runbooks" / "proxy-subscription-client-deployment-requirements.md").read_text(
-        encoding="utf-8"
-    )
-
-    assert "L4HJT32Z59" in runbook
-    assert "com.interceptsuite.ProxyBridge.extension" in runbook
-    assert "systemextensionsctl reset" in runbook
-    assert "不使用 `systemextensionsctl reset`" in runbook
-    assert "System Integrity Protection is enabled" in runbook
-    assert "scripts/macos/uninstall-hiddify-proxybridge.sh" in runbook
-    assert "scripts/macos/recovery-uninstall-proxybridge-system-extension.sh" in runbook
-    assert "pkgutil --pkgs" in runbook
-    assert "csrutil enable" in runbook
-
-
 def test_windows_scripts_keep_system_mihomo_as_only_tun_runtime() -> None:
     install_script = (ROOT / "scripts" / "windows" / "install-mihomo-tun.ps1").read_text(encoding="utf-8")
     apply_script = (ROOT / "scripts" / "windows" / "apply-mihomo-routing-policy-admin.ps1").read_text(
@@ -393,11 +442,23 @@ def test_windows_scripts_keep_system_mihomo_as_only_tun_runtime() -> None:
         assert "'clash-verge.yaml') -Force" not in script_text
 
 
-def test_mihomo_macos_and_linux_configs_keep_direct_protections_only() -> None:
-    render_artifacts = load_render_artifacts_module()
+def test_windows_mihomo_startup_tasks_are_unlimited_runtime() -> None:
+    script_paths = [
+        ROOT / "scripts" / "windows" / "install-mihomo-tun.ps1",
+        ROOT / "scripts" / "windows" / "refresh-mihomo-tun-config.ps1",
+    ]
 
-    macos = yaml.safe_load(render_artifacts.render_mihomo_config(PRIVATE_ROOT, platform="macos"))
-    linux = yaml.safe_load(render_artifacts.render_mihomo_config(PRIVATE_ROOT, platform="linux"))
+    for script_path in script_paths:
+        script_text = script_path.read_text(encoding="utf-8")
+        assert "-ExecutionTimeLimit (New-TimeSpan -Seconds 0)" in script_text, script_path
+
+
+def test_mihomo_macos_and_linux_configs_keep_direct_protections_only(tmp_path: Path) -> None:
+    render_artifacts = load_render_artifacts_module()
+    fixture_root = copy_private_fixture(tmp_path)
+
+    macos = yaml.safe_load(render_artifacts.render_mihomo_config(fixture_root, platform="macos"))
+    linux = yaml.safe_load(render_artifacts.render_mihomo_config(fixture_root, platform="linux"))
 
     macos_rules = "\n".join(macos["rules"])
     linux_rules = "\n".join(linux["rules"])
@@ -409,58 +470,63 @@ def test_mihomo_macos_and_linux_configs_keep_direct_protections_only() -> None:
     assert "PROCESS-NAME,antigravity,PROXY" not in linux_rules
     assert "PROCESS-PATH-WILDCARD,/Applications/Microsoft Edge.app/Contents/*,PROXY" not in macos_rules
     assert "PROCESS-PATH-WILDCARD,/opt/microsoft/msedge/*,PROXY" not in linux_rules
-    assert "PROCESS-PATH-WILDCARD,/Applications/ChatGPT.app/Contents/*,PROXY" in macos_rules
-    assert "PROCESS-PATH-WILDCARD,/Applications/ChatGPT Atlas.app/Contents/*,PROXY" in macos_rules
-    assert "PROCESS-PATH-WILDCARD,/Applications/Codex.app/Contents/*,PROXY" in macos_rules
+    assert "PROCESS-PATH-WILDCARD,/Applications/ChatGPT.app/Contents/*,DIRECT" in macos_rules
+    assert "PROCESS-PATH-WILDCARD,/Applications/ChatGPT Atlas.app/Contents/*,DIRECT" in macos_rules
+    assert "PROCESS-PATH-WILDCARD,/Applications/Codex.app/Contents/*,DIRECT" in macos_rules
+    assert "PROCESS-PATH-WILDCARD,/Applications/ChatGPT.app/Contents/*,PROXY" not in macos_rules
+    assert "PROCESS-PATH-WILDCARD,/Applications/ChatGPT Atlas.app/Contents/*,PROXY" not in macos_rules
+    assert "PROCESS-PATH-WILDCARD,/Applications/Codex.app/Contents/*,PROXY" not in macos_rules
     assert "PROCESS-PATH-WILDCARD,/Applications/Antigravity.app/Contents/*,PROXY" in macos_rules
     assert "PROCESS-PATH-WILDCARD,/opt/antigravity/*,PROXY" in linux_rules
-    assert "PROCESS-PATH-WILDCARD,/opt/chatgpt/*,PROXY" in linux_rules
-    assert "PROCESS-PATH-WILDCARD,/opt/codex/*,PROXY" in linux_rules
+    assert "PROCESS-PATH-WILDCARD,/opt/chatgpt/*,DIRECT" in linux_rules
+    assert "PROCESS-PATH-WILDCARD,/opt/codex/*,DIRECT" in linux_rules
+    assert "PROCESS-PATH-WILDCARD,/opt/chatgpt/*,PROXY" not in linux_rules
+    assert "PROCESS-PATH-WILDCARD,/opt/codex/*,PROXY" not in linux_rules
     assert "PROCESS-NAME,node,PROXY" not in linux_rules
     assert "PROCESS-NAME,python,PROXY" not in linux_rules
     assert macos["rules"][-1] == "MATCH,PROXY"
     assert linux["rules"][-1] == "MATCH,PROXY"
 
 
-def test_mihomo_config_maps_enabled_nodes_to_vless_reality_proxies() -> None:
+def test_mihomo_config_maps_enabled_nodes_to_vless_reality_proxies(tmp_path: Path) -> None:
     render_artifacts = load_render_artifacts_module()
+    fixture_root = copy_private_fixture(tmp_path)
 
-    config = yaml.safe_load(render_artifacts.render_mihomo_config(PRIVATE_ROOT, platform="macos"))
+    config = yaml.safe_load(render_artifacts.render_mihomo_config(fixture_root, platform="macos"))
 
     proxy_by_name = {proxy["name"]: proxy for proxy in config["proxies"]}
-    assert "GG-Lisa-Stable" in proxy_by_name
-    lisa = proxy_by_name["GG-Lisa-Stable"]
-    assert lisa["type"] == "vless"
-    assert lisa["port"] == 10003
-    assert lisa["network"] == "tcp"
-    assert lisa["tls"] is True
-    assert lisa["flow"] == "xtls-rprx-vision"
-    assert lisa["client-fingerprint"] == "chrome"
-    assert "public-key" in lisa["reality-opts"]
-    assert "short-id" in lisa["reality-opts"]
+    assert "GG-Vmrack1" in proxy_by_name
+    vmrack = proxy_by_name["GG-Vmrack1"]
+    assert vmrack["type"] == "vless"
+    assert vmrack["port"] == 10003
+    assert vmrack["network"] == "tcp"
+    assert vmrack["tls"] is True
+    assert vmrack["flow"] == "xtls-rprx-vision"
+    assert vmrack["client-fingerprint"] == "chrome"
+    assert "public-key" in vmrack["reality-opts"]
+    assert "short-id" in vmrack["reality-opts"]
 
 
-def test_subscription_landing_page_links_mihomo_configs() -> None:
+def test_subscription_landing_page_links_mihomo_configs(tmp_path: Path) -> None:
     render_artifacts = load_render_artifacts_module()
+    fixture_root = copy_private_fixture(tmp_path)
 
-    html = render_artifacts.render_subscription_landing_page(PRIVATE_ROOT)
+    html = render_artifacts.render_subscription_landing_page(fixture_root)
 
     assert "mihomo-universal.yaml" in html
     assert "mihomo-windows.yaml" not in html
     assert "mihomo-macos.yaml" not in html
     assert "mihomo-linux.yaml" not in html
-    assert "Hiddify" not in html
-    assert "hiddify://" not in html
-    assert "hiddify_import" not in html
     assert "DustinWin/ruleset_geodata" in html
     assert "places AI app process rules before China direct rules" not in html
     assert "keeps mainland China/private traffic direct" in html
 
 
-def test_mihomo_process_notes_include_wps_domains() -> None:
+def test_mihomo_process_notes_include_wps_domains(tmp_path: Path) -> None:
     render_artifacts = load_render_artifacts_module()
+    fixture_root = copy_private_fixture(tmp_path)
 
-    notes = render_artifacts.render_mihomo_process_routing_notes(PRIVATE_ROOT)
+    notes = render_artifacts.render_mihomo_process_routing_notes(fixture_root)
 
     assert "WPS / Kingsoft domain DIRECT rules" in notes
     assert "wps.cn" in notes
@@ -509,11 +575,12 @@ def test_generated_mihomo_universal_matches_render() -> None:
     assert generated_path.read_text(encoding="utf-8") == rendered
 
 
-def test_allowed_process_proxy_rule_lists_stay_in_sync() -> None:
+def test_allowed_process_proxy_rule_lists_stay_in_sync(tmp_path: Path) -> None:
     render_artifacts = load_render_artifacts_module()
+    fixture_root = copy_private_fixture(tmp_path)
     verify_script = (ROOT / "scripts" / "windows" / "verify-mihomo-windows.ps1").read_text(encoding="utf-8")
 
-    config = yaml.safe_load(render_artifacts.render_mihomo_config(PRIVATE_ROOT, platform="universal"))
+    config = yaml.safe_load(render_artifacts.render_mihomo_config(fixture_root, platform="universal"))
     expected_payloads = {
         rule.split(",", 2)[1]
         for rule in config["rules"]
@@ -526,23 +593,31 @@ def test_allowed_process_proxy_rule_lists_stay_in_sync() -> None:
     assert expected_payloads == allowed_payloads
 
 
-def test_public_base_url_override_rewrites_mihomo_links_and_direct_host(monkeypatch) -> None:
+def test_public_base_url_override_rewrites_mihomo_links_and_direct_host(tmp_path: Path, monkeypatch) -> None:
     render_artifacts = load_render_artifacts_module()
-    monkeypatch.setenv("PUBLIC_BASE_URL", "http://69.5.53.82:18080/subscriptions")
+    fixture_root = copy_private_fixture(tmp_path)
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://subs.sea.prod.gglohh.top/subscriptions")
 
-    html = render_artifacts.render_subscription_landing_page(PRIVATE_ROOT)
-    config = yaml.safe_load(render_artifacts.render_mihomo_config(PRIVATE_ROOT, platform="windows"))
+    html = render_artifacts.render_subscription_landing_page(fixture_root)
+    config = yaml.safe_load(render_artifacts.render_mihomo_config(fixture_root, platform="windows"))
 
-    assert "http://69.5.53.82:18080/subscriptions/mihomo-universal.yaml" in html
-    assert "DOMAIN,69.5.53.82,DIRECT" in config["rules"]
-    assert "DOMAIN-SUFFIX,69.5.53.82,DIRECT" in config["rules"]
+    assert "https://subs.sea.prod.gglohh.top/subscriptions/mihomo-universal.yaml" in html
+    assert "DOMAIN,subs.sea.prod.gglohh.top,DIRECT" in config["rules"]
+    assert "DOMAIN-SUFFIX,subs.sea.prod.gglohh.top,DIRECT" in config["rules"]
 
 
-def test_subscriptions_inventory_uses_sea_bgp_authoritative_base_url() -> None:
+def test_subscriptions_inventory_uses_sea_gateway_authoritative_base_url() -> None:
     subscriptions = yaml.safe_load((PRIVATE_ROOT / "inventory" / "subscriptions.yaml").read_text(encoding="utf-8"))
-    assert subscriptions["subscription_base_url"] == "http://69.5.53.82:18080/subscriptions"
+    assert subscriptions["subscription_base_url"] == "https://subs.sea.prod.gglohh.top/subscriptions"
+    assert subscriptions["publish"]["verify_url"] == "https://subs.sea.prod.gglohh.top/subscriptions/v2ray_nodes.txt"
     assert subscriptions["publish"]["node"] == "us_sea_bgp_01"
+    legacy_subscription_port = ":180" + "80"
+    assert legacy_subscription_port not in subscriptions["subscription_base_url"]
     assert ":27111" not in subscriptions["subscription_base_url"]
+    assert "systemd_unit" not in subscriptions["publish"]
+    assert "publish_port" not in subscriptions["publish"]
+    old_subscription_port = "180" + "80"
+    assert old_subscription_port not in json.dumps(subscriptions["publish"], sort_keys=True)
 
 
 def test_generated_subscriptions_do_not_use_deprecated_27111_urls() -> None:
@@ -569,15 +644,60 @@ def test_runbook_documents_sea_bgp_primary_subscription_url() -> None:
     runbook = (ROOT / "docs" / "runbooks" / "proxy-subscription-client-deployment-requirements.md").read_text(
         encoding="utf-8"
     )
-    assert "http://69.5.53.82:18080/subscriptions" in runbook
+    assert "https://subs.sea.prod.gglohh.top/subscriptions" in runbook
     assert "publish_subscriptions_to_sea_host.sh" in runbook
     assert "27111" in runbook
-    assert "已退役" in runbook or "deprecated" in runbook.lower() or "不得" in runbook
+    legacy_subscription_ip_port = "69.5.53.82:" + ("180" + "80")
+    assert legacy_subscription_ip_port not in runbook
+    legacy_subscription_unit = "gg-proxy-subscriptions-" + "http.service"
+    assert legacy_subscription_unit not in runbook
+    assert "不要恢复 IP+HTTP 端口" in runbook
+
+
+def test_runbook_documents_native_sea_gateway_https_cutover_gate() -> None:
+    runbook = (ROOT / "docs" / "runbooks" / "proxy-subscription-client-deployment-requirements.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "native Podman `sea-gateway`" in runbook
+    assert "https://subs.sea.prod.gglohh.top/subscriptions" in runbook
+    assert "sea-gateway` production" in runbook
+    assert "`80/443`" in runbook
+    assert "本地 Codex / mihomo 订阅配置切到域名 `443`" in runbook
+    assert "k0s Traefik" not in runbook
+
+
+def test_sea_bgp_ssh_scripts_require_env_password_without_literal_fallback() -> None:
+    script_paths = sorted((ROOT / "scripts" / "windows").glob("ssh-sea-bgp-*.mjs"))
+    assert script_paths
+
+    for script_path in script_paths:
+        script_text = script_path.read_text(encoding="utf-8")
+        assert "process.env.SEA_PASSWORD ||" not in script_text
+        assert "SEA_PASSWORD_required" in script_text
+
+
+def test_active_sea_subscription_paths_do_not_publish_legacy_http_ip_port() -> None:
+    checked_paths = [
+        ROOT / "docs" / "runbooks" / "proxy-subscription-client-deployment-requirements.md",
+        PRIVATE_ROOT / "docs" / "client-subscription-quickstart.md",
+        ROOT / "scripts" / "windows" / "ssh-sea-bgp-probe.mjs",
+        ROOT / "scripts" / "windows" / "ssh-sea-bgp-deep-audit.mjs",
+        ROOT / "scripts" / "windows" / "ssh-sea-bgp-chatgpt-stability.mjs",
+    ]
+
+    for path in checked_paths:
+        text = path.read_text(encoding="utf-8")
+        old_subscription_port = "180" + "80"
+        legacy_subscription_ip_port = "69.5.53.82:" + old_subscription_port
+        legacy_local_subscription_url = "127.0.0.1:" + old_subscription_port
+        legacy_subscription_unit = "gg-proxy-subscriptions-" + "http.service"
+        assert legacy_subscription_ip_port not in text, path
+        assert legacy_local_subscription_url not in text, path
+        assert legacy_subscription_unit not in text, path
 
 
 def test_render_v2ray_subscription_honors_availability_ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import shutil
-
     render_artifacts = load_render_artifacts_module()
     fixture_root = tmp_path / "repo"
     shutil.copytree(PRIVATE_ROOT / "inventory", fixture_root / "inventory")
@@ -590,6 +710,11 @@ def test_render_v2ray_subscription_honors_availability_ledger(tmp_path: Path, mo
         for node in inventory["nodes"]
         if node.get("enabled") and node.get("include_in_subscription", True)
     )
+    healthy_node_name = next(
+        str(node["name"])
+        for node in inventory["nodes"]
+        if node.get("enabled") and node.get("include_in_subscription", True) and str(node["name"]) != node_name
+    )
     four_days_ago = (datetime.now(timezone.utc) - timedelta(days=4)).isoformat().replace("+00:00", "Z")
     (fixture_root / "state" / "node_availability.json").write_text(
         json.dumps(
@@ -600,6 +725,11 @@ def test_render_v2ray_subscription_honors_availability_ledger(tmp_path: Path, mo
                         "last_health": "down",
                         "unavailable_since": four_days_ago,
                         "detail": "tcp failed",
+                    },
+                    healthy_node_name: {
+                        "last_health": "healthy",
+                        "unavailable_since": None,
+                        "detail": "tcp succeeded",
                     }
                 },
             },
@@ -612,6 +742,11 @@ def test_render_v2ray_subscription_honors_availability_ledger(tmp_path: Path, mo
     all_nodes = render_artifacts.render_v2ray_subscription(fixture_root)
     excluded_single = render_artifacts.render_v2ray_subscription(fixture_root, node_name=node_name)
 
-    assert node_name not in all_nodes
+    excluded_host = next(
+        str(node.get("proxy_domain") or node["host"])
+        for node in inventory["nodes"]
+        if str(node["name"]) == node_name
+    )
+    assert f"@{excluded_host}:" not in all_nodes
     assert excluded_single == ""
-    assert render_artifacts.subscription_eligible_nodes(fixture_root)
+    assert render_artifacts.subscription_publishable_nodes(fixture_root)

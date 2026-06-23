@@ -71,32 +71,70 @@ function Test-AllowedProcessProxyRule {
         'C:\Program Files\Google\Antigravity\*',
         'C:\Program Files\Google\Antigravity*\*',
         'C:\Users\*\AppData\Local\Programs\Antigravity\*',
-        'C:\Users\*\AppData\Local\OpenAI\Codex\bin\*\codex.exe',
-        'C:\Program Files\WindowsApps\OpenAI.Codex_*\app\*',
-        'C:\Program Files\OpenAI\ChatGPT\*',
-        'C:\Users\*\AppData\Local\Programs\ChatGPT\*',
-        'C:\Program Files\OpenAI\ChatGPT Atlas\*',
-        'C:\Users\*\AppData\Local\Programs\ChatGPT Atlas\*',
         '/Applications/Antigravity.app/Contents/*',
-        '/Applications/ChatGPT.app/Contents/*',
-        '/Applications/ChatGPT Atlas.app/Contents/*',
-        '/Applications/Codex.app/Contents/*',
         '/Users/*/Applications/Antigravity.app/Contents/*',
-        '/Users/*/Applications/ChatGPT.app/Contents/*',
-        '/Users/*/Applications/ChatGPT Atlas.app/Contents/*',
-        '/Users/*/Applications/Codex.app/Contents/*',
         '/opt/Antigravity/*',
         '/opt/antigravity/*',
-        '/usr/bin/antigravity*',
-        '/opt/chatgpt/*',
-        '/usr/bin/chatgpt*',
-        '/opt/chatgpt-atlas/*',
-        '/usr/bin/chatgpt-atlas*',
-        '/usr/bin/chatgptatlas*',
-        '/opt/codex/*',
-        '/usr/bin/codex'
+        '/usr/bin/antigravity*'
     )
     return $allowedPayloads -contains $Payload
+}
+
+function Get-ExpectedOpenAIDomainProxyPayloads {
+    return @(
+        'openai.com',
+        'chatgpt.com',
+        'oaistatic.com',
+        'oaiusercontent.com',
+        'oaistatsig.com',
+        'auth.openai.com',
+        'auth0.openai.com',
+        'cdn.openaimerge.com'
+    )
+}
+
+function Assert-OpenAIDomainProxyGuardrails {
+    param(
+        [Parameter(Mandatory)] [string]$Source,
+        [Parameter(Mandatory)] [array]$Rules
+    )
+
+    $expectedPayloads = Get-ExpectedOpenAIDomainProxyPayloads
+    $domainProxyRules = @($Rules | Where-Object {
+        $_.proxy -eq 'PROXY' -and
+        ($_.type -eq 'DomainSuffix' -or $_.type -eq 'DOMAIN-SUFFIX') -and
+        ($expectedPayloads -contains [string]$_.payload)
+    })
+    $forbiddenKeywordRules = @($Rules | Where-Object {
+        ($_.type -eq 'DomainKeyword' -or $_.type -eq 'DOMAIN-KEYWORD') -and
+        ([string]$_.payload).ToLowerInvariant() -in @('openai', 'codex', 'openaiapi')
+    })
+
+    Write-Host "${Source}_openai_domain_proxy_count=$($domainProxyRules.Count)"
+    Write-Host "${Source}_forbidden_openai_keyword_count=$($forbiddenKeywordRules.Count)"
+    if ($domainProxyRules.Count -ne $expectedPayloads.Count) {
+        $script:VerificationFailures.Add("${Source}_openai_domain_proxy_count=$($domainProxyRules.Count)") | Out-Null
+    }
+    if ($forbiddenKeywordRules.Count -gt 0) {
+        $forbiddenKeywordRules | Select-Object index, type, payload, proxy | Format-Table -AutoSize
+        $script:VerificationFailures.Add("${Source}_forbidden_openai_keyword_count=$($forbiddenKeywordRules.Count)") | Out-Null
+    }
+}
+
+function Convert-ConfigRuleLines {
+    param([Parameter(Mandatory)] [string]$Path)
+
+    return @(
+        Select-String -Path $Path -Pattern '^\s*-\s*([^,]+),(.+),([^,]+)\s*$' -ErrorAction SilentlyContinue |
+            ForEach-Object {
+                [pscustomobject]@{
+                    index = $_.LineNumber
+                    type = $_.Matches[0].Groups[1].Value
+                    payload = $_.Matches[0].Groups[2].Value
+                    proxy = $_.Matches[0].Groups[3].Value
+                }
+            }
+    )
 }
 
 function Invoke-MihomoPolicyProbe {
@@ -300,6 +338,7 @@ Write-Host "file_disallowed_process_proxy_count=$($fileDisallowedProcessProxyRul
 if ($fileMatchRule) { Write-Host "file_match_rule=$($fileMatchRule.Line.Trim())" }
 $fileAllowedProcessProxyRules | Select-Object LineNumber, Line | Format-Table -AutoSize
 $fileDisallowedProcessProxyRules | Select-Object LineNumber, Line | Format-Table -AutoSize
+Assert-OpenAIDomainProxyGuardrails -Source 'file' -Rules (Convert-ConfigRuleLines -Path $ConfigPath)
 if ($fileDisallowedProcessProxyRules.Count -gt 0) {
     $script:VerificationFailures.Add("file_disallowed_process_proxy_count=$($fileDisallowedProcessProxyRules.Count)") | Out-Null
 }
@@ -347,6 +386,7 @@ try {
     Write-Host "runtime_disallowed_process_proxy_count=$($runtimeBadProcessProxyRules.Count)"
     $runtimeAllowedProcessProxyRules | Select-Object index, type, payload, proxy | Format-Table -AutoSize
     $runtimeBadProcessProxyRules | Select-Object index, type, payload, proxy | Format-Table -AutoSize
+    Assert-OpenAIDomainProxyGuardrails -Source 'runtime' -Rules $runtimeRules.rules
     if ($runtimeBadProcessProxyRules.Count -gt 0) {
         $script:VerificationFailures.Add("runtime_disallowed_process_proxy_count=$($runtimeBadProcessProxyRules.Count)") | Out-Null
     }
@@ -482,4 +522,3 @@ foreach ($failure in $script:VerificationFailures) {
     Write-Host "verification_failure=$failure"
 }
 exit 1
-
