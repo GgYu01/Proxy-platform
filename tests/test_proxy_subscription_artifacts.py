@@ -577,6 +577,12 @@ def test_windows_quick_install_script_is_public_safe_and_verifiable(tmp_path: Pa
     assert "compressed-dist.tgz" in script
     assert "Assert-Administrator" in script
     assert "Assert-FileDigest" in script
+    assert "Get-Command curl.exe" in script
+    assert "download_attempt=$attempt" in script
+    assert "Invoke-WebRequest failed:" in script
+    assert "curl.exe download failed" in script
+    assert "[int]$MaxAttempts = 4" in script
+    assert "Download failed after $MaxAttempts attempts" in script
     assert "Backup-ExistingPath" in script
     assert "-ExecutionTimeLimit (New-TimeSpan -Seconds 0)" in script
     assert "external-controller: 127.0.0.1:9090" in script
