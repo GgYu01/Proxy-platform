@@ -194,6 +194,9 @@ def test_mihomo_config_uses_dustinwin_tun_and_direct_process_protections(tmp_pat
     assert config["geodata-mode"] is False
     assert config["tun"]["enable"] is True
     assert config["tun"]["auto-route"] is True
+    assert "69.5.53.82/32" in config["tun"]["route-exclude-address"]
+    assert "38.65.93.39/32" in config["tun"]["route-exclude-address"]
+    assert "67.215.238.140/32" in config["tun"]["route-exclude-address"]
     assert "any:53" in config["tun"]["dns-hijack"]
     assert "cn" in config["rule-providers"]
     assert config["rule-providers"]["cn"]["url"].endswith("/mihomo-ruleset/cn.mrs")
