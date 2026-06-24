@@ -125,6 +125,10 @@ def test_mihomo_universal_config_directs_cursor_domains_before_process_rules(tmp
 
     config = yaml.safe_load(render_artifacts.render_mihomo_config(fixture_root, platform="universal"))
     rules = config["rules"]
+    inventory = yaml.safe_load((fixture_root / "inventory" / "nodes.yaml").read_text(encoding="utf-8"))
+    subscriptions = yaml.safe_load((fixture_root / "inventory" / "subscriptions.yaml").read_text(encoding="utf-8"))
+    node_by_name = {str(node["name"]): node for node in inventory["nodes"]}
+    ordered_nodes = [node_by_name[str(name)] for name in subscriptions["failover_priority"]]
 
     expected_cursor_rules = [
         "DOMAIN-KEYWORD,cursor,DIRECT",
@@ -136,7 +140,14 @@ def test_mihomo_universal_config_directs_cursor_domains_before_process_rules(tmp
         "DOMAIN-SUFFIX,anysphere.inc,DIRECT",
     ]
     assert rules[: len(expected_cursor_rules)] == expected_cursor_rules
-    openai_start = len(expected_cursor_rules)
+    expected_proxy_node_rules = [
+        f"IP-CIDR,{node['host']}/32,DIRECT,no-resolve"
+        for node in ordered_nodes
+        if node.get("enabled") and node.get("include_in_subscription", True)
+    ]
+    proxy_node_start = len(expected_cursor_rules)
+    assert rules[proxy_node_start : proxy_node_start + len(expected_proxy_node_rules)] == expected_proxy_node_rules
+    openai_start = len(expected_cursor_rules) + len(expected_proxy_node_rules)
     assert rules[openai_start : openai_start + len(OPENAI_PROXY_DOMAIN_RULES)] == OPENAI_PROXY_DOMAIN_RULES
     expected_wps_domain_rules = [
         "DOMAIN-KEYWORD,kingsoft,DIRECT",
@@ -151,18 +162,21 @@ def test_mihomo_universal_config_directs_cursor_domains_before_process_rules(tmp
         "DOMAIN-SUFFIX,ksord.com,DIRECT",
         "DOMAIN-SUFFIX,wpsplus.com,DIRECT",
     ]
-    wps_start = len(expected_cursor_rules) + len(OPENAI_PROXY_DOMAIN_RULES)
+    wps_start = len(expected_cursor_rules) + len(expected_proxy_node_rules) + len(OPENAI_PROXY_DOMAIN_RULES)
     assert rules[wps_start : wps_start + len(expected_wps_domain_rules)] == expected_wps_domain_rules
     first_process_rule = next(i for i, rule in enumerate(rules) if rule.startswith("PROCESS-"))
     first_process_proxy_rule = next(i for i, rule in enumerate(rules) if rule.startswith("PROCESS-") and rule.endswith(",PROXY"))
     first_proxy_ruleset = rules.index("RULE-SET,proxy,PROXY")
     assert all(rules.index(rule) < first_process_rule for rule in expected_cursor_rules)
+    assert all(rules.index(rule) < first_process_rule for rule in expected_proxy_node_rules)
     assert all(rules.index(rule) < first_process_rule for rule in OPENAI_PROXY_DOMAIN_RULES)
     assert all(rules.index(rule) < first_process_rule for rule in expected_wps_domain_rules)
     assert all(rules.index(rule) < first_process_proxy_rule for rule in expected_cursor_rules)
+    assert all(rules.index(rule) < first_process_proxy_rule for rule in expected_proxy_node_rules)
     assert all(rules.index(rule) < first_process_proxy_rule for rule in OPENAI_PROXY_DOMAIN_RULES)
     assert all(rules.index(rule) < first_process_proxy_rule for rule in expected_wps_domain_rules)
     assert all(rules.index(rule) < first_proxy_ruleset for rule in expected_cursor_rules)
+    assert all(rules.index(rule) < first_proxy_ruleset for rule in expected_proxy_node_rules)
     assert all(rules.index(rule) < first_proxy_ruleset for rule in OPENAI_PROXY_DOMAIN_RULES)
     assert all(rules.index(rule) < first_proxy_ruleset for rule in expected_wps_domain_rules)
     assert not any(any(rule.startswith(forbidden) for forbidden in FORBIDDEN_OPENAI_KEYWORD_RULES) for rule in rules)
