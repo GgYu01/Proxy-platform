@@ -550,12 +550,58 @@ def test_subscription_landing_page_links_mihomo_configs(tmp_path: Path) -> None:
     html = render_artifacts.render_subscription_landing_page(fixture_root)
 
     assert "mihomo-universal.yaml" in html
+    assert "install-mihomo-windows.ps1" in html
+    assert (
+        "iwr -UseB https://subs.sea.prod.gglohh.top/subscriptions/install-mihomo-windows.ps1"
+        in html
+    )
+    assert "http://127.0.0.1:9090/ui/" in html
+    assert "MetaCubeXD Web 面板不是订阅源配置中心" in html
     assert "mihomo-windows.yaml" not in html
     assert "mihomo-macos.yaml" not in html
     assert "mihomo-linux.yaml" not in html
     assert "DustinWin/ruleset_geodata" in html
     assert "places AI app process rules before China direct rules" not in html
     assert "keeps mainland China/private traffic direct" in html
+
+
+def test_windows_quick_install_script_is_public_safe_and_verifiable(tmp_path: Path) -> None:
+    render_artifacts = load_render_artifacts_module()
+    fixture_root = copy_private_fixture(tmp_path)
+
+    script = render_artifacts.render_windows_mihomo_install_script(fixture_root)
+
+    assert "https://subs.sea.prod.gglohh.top/subscriptions/mihomo-universal.yaml" in script
+    assert "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest" in script
+    assert "https://api.github.com/repos/MetaCubeX/metacubexd/releases/latest" in script
+    assert "compressed-dist.tgz" in script
+    assert "Assert-Administrator" in script
+    assert "Assert-FileDigest" in script
+    assert "Backup-ExistingPath" in script
+    assert "-ExecutionTimeLimit (New-TimeSpan -Seconds 0)" in script
+    assert "external-controller: 127.0.0.1:9090" in script
+    assert "external-ui: ui" in script
+    assert "C:\\Windows\\System32\\config\\systemprofile\\.config\\mihomo\\mihomo-universal.yaml" in script
+    assert "http://127.0.0.1:9090/ui/" in script
+    assert "mihomo-windows-amd64" in script
+    assert "MetaCubeXD-1." not in script
+    assert "v1.19.27" not in script
+    assert "v1.261.6" not in script
+    assert "Proxy_ops_private" not in script
+    assert "proxy_ops_private" not in script
+    assert "inventory/nodes.yaml" not in script
+    assert "token" not in script.lower()
+    assert "cookie" not in script.lower()
+    assert "secret:" not in script.lower()
+    assert "$ErrorActionPreference = 'Stop'" in script
+
+
+def test_generated_windows_quick_install_script_matches_render() -> None:
+    render_artifacts = load_render_artifacts_module()
+
+    generated_path = PRIVATE_ROOT / "generated" / "subscriptions" / "install-mihomo-windows.ps1"
+    rendered = render_artifacts.render_windows_mihomo_install_script(PRIVATE_ROOT)
+    assert generated_path.read_text(encoding="utf-8") == rendered
 
 
 def test_mihomo_process_notes_include_wps_domains(tmp_path: Path) -> None:
