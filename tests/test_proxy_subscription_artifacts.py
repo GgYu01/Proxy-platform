@@ -147,7 +147,16 @@ def test_mihomo_universal_config_directs_cursor_domains_before_process_rules(tmp
     ]
     proxy_node_start = len(expected_cursor_rules)
     assert rules[proxy_node_start : proxy_node_start + len(expected_proxy_node_rules)] == expected_proxy_node_rules
-    openai_start = len(expected_cursor_rules) + len(expected_proxy_node_rules)
+    expected_pre_domain_process_rules = [
+        "PROCESS-PATH-WILDCARD,/Applications/Safari.app/Contents/*,DIRECT",
+        "PROCESS-PATH-WILDCARD,/System/Applications/Safari.app/Contents/*,DIRECT",
+    ]
+    pre_domain_process_start = len(expected_cursor_rules) + len(expected_proxy_node_rules)
+    assert (
+        rules[pre_domain_process_start : pre_domain_process_start + len(expected_pre_domain_process_rules)]
+        == expected_pre_domain_process_rules
+    )
+    openai_start = len(expected_cursor_rules) + len(expected_proxy_node_rules) + len(expected_pre_domain_process_rules)
     assert rules[openai_start : openai_start + len(OPENAI_PROXY_DOMAIN_RULES)] == OPENAI_PROXY_DOMAIN_RULES
     expected_wps_domain_rules = [
         "DOMAIN-KEYWORD,kingsoft,DIRECT",
@@ -162,21 +171,23 @@ def test_mihomo_universal_config_directs_cursor_domains_before_process_rules(tmp
         "DOMAIN-SUFFIX,ksord.com,DIRECT",
         "DOMAIN-SUFFIX,wpsplus.com,DIRECT",
     ]
-    wps_start = len(expected_cursor_rules) + len(expected_proxy_node_rules) + len(OPENAI_PROXY_DOMAIN_RULES)
+    wps_start = (
+        len(expected_cursor_rules)
+        + len(expected_proxy_node_rules)
+        + len(expected_pre_domain_process_rules)
+        + len(OPENAI_PROXY_DOMAIN_RULES)
+    )
     assert rules[wps_start : wps_start + len(expected_wps_domain_rules)] == expected_wps_domain_rules
-    first_process_rule = next(i for i, rule in enumerate(rules) if rule.startswith("PROCESS-"))
     first_process_proxy_rule = next(i for i, rule in enumerate(rules) if rule.startswith("PROCESS-") and rule.endswith(",PROXY"))
     first_proxy_ruleset = rules.index("RULE-SET,proxy,PROXY")
-    assert all(rules.index(rule) < first_process_rule for rule in expected_cursor_rules)
-    assert all(rules.index(rule) < first_process_rule for rule in expected_proxy_node_rules)
-    assert all(rules.index(rule) < first_process_rule for rule in OPENAI_PROXY_DOMAIN_RULES)
-    assert all(rules.index(rule) < first_process_rule for rule in expected_wps_domain_rules)
     assert all(rules.index(rule) < first_process_proxy_rule for rule in expected_cursor_rules)
     assert all(rules.index(rule) < first_process_proxy_rule for rule in expected_proxy_node_rules)
+    assert all(rules.index(rule) < first_process_proxy_rule for rule in expected_pre_domain_process_rules)
     assert all(rules.index(rule) < first_process_proxy_rule for rule in OPENAI_PROXY_DOMAIN_RULES)
     assert all(rules.index(rule) < first_process_proxy_rule for rule in expected_wps_domain_rules)
     assert all(rules.index(rule) < first_proxy_ruleset for rule in expected_cursor_rules)
     assert all(rules.index(rule) < first_proxy_ruleset for rule in expected_proxy_node_rules)
+    assert all(rules.index(rule) < first_proxy_ruleset for rule in expected_pre_domain_process_rules)
     assert all(rules.index(rule) < first_proxy_ruleset for rule in OPENAI_PROXY_DOMAIN_RULES)
     assert all(rules.index(rule) < first_proxy_ruleset for rule in expected_wps_domain_rules)
     assert not any(any(rule.startswith(forbidden) for forbidden in FORBIDDEN_OPENAI_KEYWORD_RULES) for rule in rules)
@@ -259,6 +270,7 @@ def test_mihomo_config_uses_dustinwin_tun_and_direct_process_protections(tmp_pat
     allowed_process_proxy_fragments = (
         "Simprint",
         "Antigravity",
+        "Microsoft Edge",
     )
     bad_process_proxy_rules = [
         rule
@@ -338,7 +350,8 @@ def test_mihomo_process_notes_describe_mainland_split_policy() -> None:
     assert "cursorapi.com" in notes
     assert "Official OpenAI / ChatGPT / Codex domains are high-priority `PROXY` rules" in notes
     assert "OpenAI-family desktop app paths are `DIRECT` fallbacks" in notes
-    assert "Antigravity and Simprint Chrome profile paths are default process-level `PROXY` overrides" in notes
+    assert "Safari app paths are high-priority `DIRECT` process exceptions" in notes
+    assert "Antigravity, macOS Microsoft Edge, and Simprint Chrome profile paths are default process-level `PROXY` overrides" in notes
     assert "DOMAIN-KEYWORD,openai" not in notes
     assert "DOMAIN-KEYWORD,codex" not in notes
     assert "WPS / Kingsoft domain DIRECT rules" in notes
@@ -482,10 +495,13 @@ def test_mihomo_macos_and_linux_configs_keep_direct_protections_only(tmp_path: P
 
     assert "PROCESS-NAME,Cursor Helper,DIRECT" in macos_rules
     assert "PROCESS-NAME,cursor-agent,DIRECT" in linux_rules
+    assert "PROCESS-PATH-WILDCARD,/Applications/Safari.app/Contents/*,DIRECT" in macos_rules
+    assert "PROCESS-PATH-WILDCARD,/System/Applications/Safari.app/Contents/*,DIRECT" in macos_rules
     assert "PROCESS-NAME,ChatGPT Atlas,PROXY" not in macos_rules
     assert "PROCESS-NAME,Antigravity Helper,PROXY" not in macos_rules
     assert "PROCESS-NAME,antigravity,PROXY" not in linux_rules
-    assert "PROCESS-PATH-WILDCARD,/Applications/Microsoft Edge.app/Contents/*,PROXY" not in macos_rules
+    assert "PROCESS-PATH-WILDCARD,/Applications/Microsoft Edge.app/Contents/*,PROXY" in macos_rules
+    assert "PROCESS-PATH-WILDCARD,/Users/*/Applications/Microsoft Edge.app/Contents/*,PROXY" in macos_rules
     assert "PROCESS-PATH-WILDCARD,/opt/microsoft/msedge/*,PROXY" not in linux_rules
     assert "PROCESS-PATH-WILDCARD,/Applications/ChatGPT.app/Contents/*,DIRECT" in macos_rules
     assert "PROCESS-PATH-WILDCARD,/Applications/ChatGPT Atlas.app/Contents/*,DIRECT" in macos_rules
@@ -501,6 +517,9 @@ def test_mihomo_macos_and_linux_configs_keep_direct_protections_only(tmp_path: P
     assert "PROCESS-PATH-WILDCARD,/opt/codex/*,PROXY" not in linux_rules
     assert "PROCESS-NAME,node,PROXY" not in linux_rules
     assert "PROCESS-NAME,python,PROXY" not in linux_rules
+    first_safari_direct = macos["rules"].index("PROCESS-PATH-WILDCARD,/Applications/Safari.app/Contents/*,DIRECT")
+    first_openai_proxy = min(macos["rules"].index(rule) for rule in OPENAI_PROXY_DOMAIN_RULES)
+    assert first_safari_direct < first_openai_proxy
     assert macos["rules"][-1] == "MATCH,PROXY"
     assert linux["rules"][-1] == "MATCH,PROXY"
 
@@ -561,7 +580,7 @@ def test_runbook_documents_wps_and_dual_mihomo_monitoring() -> None:
     assert "127.0.0.1:9090" in runbook
     assert "watch-wps-routing.ps1" in runbook
     assert "accept-mihomo-windows.ps1" in runbook
-    assert "file_allowed_process_proxy_count=29" in runbook
+    assert "file_allowed_process_proxy_count=31" in runbook
     assert "update.wps.cn" in runbook
 
 

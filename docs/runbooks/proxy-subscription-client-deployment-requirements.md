@@ -30,21 +30,20 @@
 - `singbox-client-profile.json` / `singbox_remote_profile.json`。
 - 不再发布 Hiddify deep link 作为页面入口或生成产物；如需兼容其它客户端，使用原始 VLESS 订阅 URL。
 
-当前公开订阅 base URL（权威，LisaHost SEA BGP 临时宿主）：
+当前公开订阅 base URL（权威，LisaHost SEA BGP 生产入口）：
 
-- `http://69.5.53.82:18080/subscriptions`
+- `https://subs.sea.prod.gglohh.top/subscriptions`
 
 已退役、不得再作为客户端主入口：
 
+- 旧 raw-IP HTTP 临时入口
 - `https://proxy-subscriptions.svc.prod.lab.gglohh.top:27111/subscriptions`（原 infra-core Traefik；主机 `112.28.134.53` 已删除）
 
-未来 HTTPS 入口（k0s Traefik / `sea.prod.gglohh.top` 就绪后迁移，不在本轮实现）：
-
-- 待定；迁移前继续使用 `:18080` HTTP 入口
+当前 HTTPS 入口由 native Podman `sea-gateway` production gateway / Traefik 在 `subs.sea.prod.gglohh.top` 的 `80/443` 提供，不再依赖 k0s 或 raw-IP HTTP 端口。本地 Codex / mihomo 订阅配置切到域名 `443`，不要恢复 IP+HTTP 端口。
 
 Windows 本地安装脚本使用的 mihomo 订阅 URL：
 
-- `http://69.5.53.82:18080/subscriptions/mihomo-universal.yaml`
+- `https://subs.sea.prod.gglohh.top/subscriptions/mihomo-universal.yaml`
 
 订阅域名或 IP 必须在 mihomo 配置中走 `DIRECT`，避免配置更新依赖已成功工作的代理路径。
 
@@ -65,13 +64,13 @@ REMOTE_PASSWORD='...' bash repos/proxy_ops_private/scripts/publish_subscriptions
 
 `publish_subscriptions_to_infra_core.sh` 仅为兼容 wrapper，会委托到新脚本。
 
-远端路径：`/srv/proxy-subscriptions/public/subscriptions`，由 `gg-proxy-subscriptions-http.service` 在 `:18080` 提供 HTTP 静态服务。不要发布到 `/mnt/hdo/infra-core`（infra-core 已退役）。
+远端路径：`/srv/proxy-subscriptions/public/subscriptions`，由 native Podman `gg-proxy-subscriptions` 服务提供静态文件，并通过 native Podman `sea-gateway` / Traefik 暴露到 `https://subs.sea.prod.gglohh.top/subscriptions`。不要发布到 `/mnt/hdo/infra-core`（infra-core 已退役），也不要恢复旧 raw-IP HTTP 入口。
 
 ## 可用性剔除（72 小时）
 
 - 策略配置：`repos/proxy_ops_private/inventory/subscriptions.yaml` → `availability_policy`
 - 账本：`repos/proxy_ops_private/state/node_availability.json`（git 跟踪）
-- 判定：TCP 连接 `base_port + probe_port_offset`（默认 +1），与 platform `observation_probe` 一致
+- 判定：临时 mihomo 单节点配置访问 `https://api.openai.com/v1/models` 返回可接受 HTTP 状态（默认 `200/401/403/404`）；TCP 连接 `base_port + probe_port_offset` 仅作为诊断字段，不作为发布门禁
 - 连续不可用 ≥72h → 从 `v2ray_nodes.txt`、`mihomo-universal.yaml`、landing 单节点链接等产物剔除；**不修改** `nodes.yaml` 的 `enabled`
 - 探测恢复 → 下次 `render_artifacts.py` 自动加回
 - 运维豁免：节点设置 `subscription_availability_exempt: true`
@@ -256,8 +255,8 @@ Verge 显示 TUN 关闭、连接列表为空，在双实例架构下是**预期�
 `mihomo-universal.yaml` 允许的进程级 `PROXY` 路径包括：
 
 - Simprint Chrome profile 浏览器 2 条
-- Antigravity / ChatGPT / ChatGPT Atlas / Codex 安装路径（Windows + macOS + Linux）
-- 跨平台 universal 合并后，当前应为 **29** 条 `PROCESS-PATH*` PROXY 规则
+- Antigravity / macOS Microsoft Edge / ChatGPT / ChatGPT Atlas / Codex 安装路径（Windows + macOS + Linux）
+- 跨平台 universal 合并后，当前应为 **31** 条 `PROCESS-PATH*` PROXY 规则
 
 禁止添加：
 
@@ -265,7 +264,7 @@ Verge 显示 TUN 关闭、连接列表为空，在双实例架构下是**预期�
 - `PROCESS-NAME,msedgewebview2.exe,PROXY`
 - 宽泛 `node` / `python` 进程代理
 
-验证时要求 `file_disallowed_process_proxy_count=0` 且 `runtime_disallowed_process_proxy_count=0`；`file_allowed_process_proxy_count` 必须等于 render 输出中的允许 PROXY 路径计数（当前 **29**）。
+验证时要求 `file_disallowed_process_proxy_count=0` 且 `runtime_disallowed_process_proxy_count=0`；`file_allowed_process_proxy_count` 必须等于 render 输出中的允许 PROXY 路径计数（当前 **31**）。
 
 ## macOS 直接进程保护
 
@@ -479,7 +478,7 @@ Windows 操作使用以下仓库脚本：
 - `PROXY` group 第一节点是 `GG-US-SEA-BGP-01`。
 - `RULE-SET,cn,DIRECT` 在 `RULE-SET,proxy,PROXY` 前。
 - 最终规则是 `MATCH,PROXY`。
-- universal 配置中允许的进程级 `PROXY` 路径计数与 render 输出一致（当前 **29**），且 `disallowed=0`。
+- universal 配置中允许的进程级 `PROXY` 路径计数与 render 输出一致（当前 **31**），且 `disallowed=0`。
 - Windows、macOS、Linux 生成配置不按宽泛 AI、浏览器、WebView 或 generic runtime 进程名强制代理。
 - landing page 只发布 universal mihomo YAML，不发布单独的 Windows、macOS、Linux YAML 链接。
 
@@ -487,7 +486,7 @@ Windows 运行态验证必须证明：
 
 - 文件 guardrails：
   - `file_ai_proxy_count=0`
-  - `file_allowed_process_proxy_count=29`
+  - `file_allowed_process_proxy_count=31`
   - `file_disallowed_process_proxy_count=0`
   - `file_match_rule=- MATCH,PROXY`
 - SYSTEM mihomo runtime：
@@ -496,12 +495,12 @@ Windows 运行态验证必须证明：
   - TUN adapter `Meta` 为 `Up`
   - `runtime_match_proxy=PROXY`
   - `runtime_ai_proxy_count=0`
-  - `runtime_allowed_process_proxy_count=29`
+  - `runtime_allowed_process_proxy_count=31`
   - `runtime_disallowed_process_proxy_count=0`
 - Clash pipe / runtime：
   - `clash_pipe_match_proxy=PROXY`
   - `clash_pipe_ai_proxy_count=0`
-  - `clash_pipe_allowed_process_proxy_count=29`
+  - `clash_pipe_allowed_process_proxy_count=31`
   - `clash_pipe_disallowed_process_proxy_count=0`
 - policy probes（全部 `status=PASS`，脚本输出 `verification_verdict=PASS`）：
   - `chat.qwen.ai` 期望 `DIRECT` via `cn`

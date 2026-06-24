@@ -93,6 +93,8 @@ function Test-AllowedProcessProxyRule {
         'C:\Users\*\AppData\Local\Programs\Antigravity\*',
         '/Applications/Antigravity.app/Contents/*',
         '/Users/*/Applications/Antigravity.app/Contents/*',
+        '/Applications/Microsoft Edge.app/Contents/*',
+        '/Users/*/Applications/Microsoft Edge.app/Contents/*',
         '/opt/Antigravity/*',
         '/opt/antigravity/*',
         '/usr/bin/antigravity*'
