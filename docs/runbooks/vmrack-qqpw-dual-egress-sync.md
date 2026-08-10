@@ -37,9 +37,9 @@ bash scripts/sync_vmrack_qqpw.sh --skip-apply --static-probe --skip-publish
 - `GG-Vmrack1` exit IP == `38.65.93.39`
 - `QQPW-Residential-*` exit IP != `38.65.93.39` (currently observed residential NAT, e.g. `147.81.120.142`)
 - `v2ray_node_vmrack1.txt` has only `:10003`
-- `v2ray_node_qqpw.txt` has `:10005`, `:10006`, and `:10007` (SOCKS5) only
+- `v2ray_node_qqpw.txt` has `:10006` VLESS (required) and optional `:10005` Hy2; no client SOCKS5
 - mihomo groups are only `PROXY` + `ChatGPT` (no `Vmrack-Public` / `QQPW-Residential`)
-- OpenAI-family domains use `ChatGPT` group; default leaf is `QQPW-Residential-SOCKS5`
+- OpenAI-family domains use `ChatGPT` group; default leaf is `QQPW-Residential-Reality` (VLESS)
 - SEA `mihomo-universal.yaml` matches generated ports/names/groups
 
 ## Publish gate

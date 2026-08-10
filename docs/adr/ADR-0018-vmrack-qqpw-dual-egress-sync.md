@@ -24,10 +24,11 @@ Accepted
    - `QQPW-*` 只发布 WG profile 端口（SOCKS5 / Reality / Hy2）
    - 删除 `GG-Vmrack1-Hysteria2` 作为机房节点
 4. 本地 mihomo 只保留两组：
-   - `ChatGPT`：OpenAI/ChatGPT/Codex 域名默认走 QQPW SOCKS5（可选其他节点 / DIRECT）
+   - `ChatGPT`：OpenAI/ChatGPT/Codex 域名默认走 QQPW VLESS Reality（Hy2 可选；也可选手动其他节点 / DIRECT）
    - `PROXY`：其余流量默认 Auto（非 QQPW 节点优先），仍可选 QQPW / DIRECT
-5. 全链路以 `scripts/sync_vmrack_qqpw.sh` 为编排入口：validate → apply WG/sing-box → probe → render → publish →（可选）本地刷新。
-6. `proxy-platform` 只记录 ADR/runbook 与可选薄委托，不把 WG/secrets/发布内核搬进平台壳。
+5. 客户端订阅以 VLESS 为主；Hy2 仅为附送可选入口，不把 SOCKS5 放进订阅默认。
+6. 全链路以 `scripts/sync_vmrack_qqpw.sh` 为编排入口：validate → apply WG/sing-box → probe → render → publish →（可选）本地刷新。
+7. `proxy-platform` 只记录 ADR/runbook 与可选薄委托，不把 WG/secrets/发布内核搬进平台壳。
 
 ## Consequences
 
